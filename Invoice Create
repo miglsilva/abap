@@ -1,0 +1,884 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZSCN_GOOD_RECIPIENT_REPORT_CL
+*&---------------------------------------------------------------------*
+CLASS lcl_application DEFINITION FINAL.
+  PUBLIC SECTION .
+    CLASS-METHODS:get_apps_instance
+                   RETURNING
+                   value(r_apps) TYPE REF TO lcl_application .
+    CLASS-METHODS set_values .
+    METHODS: constructor ,
+             main .
+
+    METHODS display_alv IMPORTING refresh TYPE flag OPTIONAL
+                                  full_screen TYPE flag OPTIONAL
+                                  i_fieldcat TYPE  lvc_t_fcat OPTIONAL
+                                  i_exclude_functions TYPE ui_functions OPTIONAL  .
+
+    CLASS-DATA: lt_data TYPE STANDARD TABLE OF struct_zzscnn_gr .
+
+    DATA lo_alv         TYPE REF TO cl_salv_table.
+
+
+  PRIVATE SECTION .
+
+    CLASS-DATA: lo_apps TYPE REF TO lcl_application.
+    DATA lo_log         TYPE REF TO zcl_bal_log .
+
+*Model
+    METHODS get_data_from_db .
+    METHODS update_data .
+    METHODS upload_file .
+    METHODS create_fi_doc .
+    METHODS call_bapi CHANGING c_header  TYPE bapiache09 OPTIONAL
+                               c_accountgl TYPE bapiacgl09_tab
+                               c_accountpayable TYPE bapiacap09_tab
+                               c_currencyamount TYPE bapiaccr09_tab
+                               c_bapiparex TYPE bapiparex_tab
+                               c_awkey TYPE awkey .
+    METHODS update_status .
+    METHODS update_gr IMPORTING i_gr TYPE struct_zzscnn_gr
+                                key TYPE abap_bool OPTIONAL
+                                item_code TYPE abap_bool OPTIONAL
+                                vendor TYPE abap_bool OPTIONAL
+                                RETURNING value(r_update) TYPE abap_bool .
+
+    METHODS update_gr_after_bapi IMPORTING i_awkey TYPE awkey
+                                           i_lines_processed TYPE tab_lines_processed .
+*View
+*Hot spot Handler
+
+    METHODS on_user_command FOR EVENT added_function OF cl_salv_events
+            IMPORTING e_salv_function .
+
+    METHODS on_link_click FOR EVENT link_click OF cl_salv_events_table
+            IMPORTING row column  .
+
+    METHODS handle_toolbar FOR EVENT toolbar OF cl_gui_alv_grid
+                           IMPORTING e_object e_interactive .
+ENDCLASS .                    "lcl_application DEFINITION
+*----------------------------------------------------------------------*
+*       CLASS lcl_template IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_application IMPLEMENTATION .
+
+  METHOD constructor .
+
+    TRY.
+      CREATE OBJECT lo_log
+        EXPORTING
+*          i_object =
+*          i_subobj =
+          i_extid = 'Log Goods Recipient'
+*          i_repid =
+*          i_tabname =
+          .
+
+*      CATCH zcx_core_exception .
+    ENDTRY.
+
+
+  ENDMETHOD .                    "constructor
+
+  METHOD get_apps_instance .
+
+*Design patternSingleton
+
+    IF lo_apps IS INITIAL.
+*     creation of the object
+      CREATE OBJECT lo_apps.
+      r_apps = lo_apps .
+    ENDIF.
+  ENDMETHOD .                    "get_apps_instance
+
+  METHOD set_values .
+
+  ENDMETHOD .                    "set_values
+
+  METHOD main .
+
+    me->get_data_from_db( ).
+
+    me->update_status( ) .
+
+    me->display_alv( full_screen = abap_true ) .
+
+  ENDMETHOD .                    "main
+
+
+  METHOD create_fi_doc .
+    DATA lw_header TYPE bapiache09 .
+    DATA lt_accountgl TYPE STANDARD TABLE OF bapiacgl09  .
+    DATA lw_accountgl TYPE bapiacgl09 .
+
+    DATA lt_accountpayable TYPE STANDARD TABLE OF bapiacap09 .
+    DATA lw_accountpayable TYPE bapiacap09 .
+
+    DATA lt_currencyamount TYPE STANDARD TABLE OF bapiaccr09 .
+    DATA lw_currencyamount TYPE bapiaccr09 .
+
+    DATA lt_bapiparex TYPE STANDARD TABLE OF bapiparex .
+    DATA lw_bapiparex TYPE bapiparex .
+
+    DATA lt_vendor_processed TYPE STANDARD TABLE OF struct_proc_zzscnn_gr .
+    DATA lw_vendor_processed TYPE struct_proc_zzscnn_gr .
+
+    DATA lt_lines_processed TYPE STANDARD TABLE OF struct_lines_proc_zzscnn_gr .
+    DATA lw_lines_processed TYPE struct_lines_proc_zzscnn_gr .
+
+    DATA lt_return TYPE STANDARD TABLE OF bapiret2 .
+
+    DATA lo_selections TYPE REF TO cl_salv_selections.
+
+    DATA lw_data_aux TYPE struct_zzscnn_gr .
+
+    DATA lt_rows   TYPE salv_t_row .
+    DATA lw_row    TYPE i .
+
+    DATA lv_itemno_acc TYPE posnr_acc .
+
+    DATA lv_awkey TYPE awkey .
+    DATA lv_lines TYPE i .
+
+    FIELD-SYMBOLS <fs_data> TYPE struct_zzscnn_gr .
+
+
+    lo_selections = lo_alv->get_selections( ).
+
+    lt_rows = lo_selections->get_selected_rows( ).
+
+    DESCRIBE TABLE lt_rows LINES lv_lines .
+
+    IF lv_lines = 0 .
+      MESSAGE e011(zdsd) WITH text-001
+                  INTO lo_log->gc_msg .
+      me->lo_log->add_syst_message( ).
+
+      lo_log->display( i_popup = abap_true ) .
+
+      EXIT .
+    ENDIF .
+
+    LOOP AT lt_rows INTO lw_row .
+
+      READ TABLE lt_data INTO lw_data_aux INDEX  lw_row .
+      IF sy-subrc = 0 .
+
+        READ TABLE lt_data INTO lw_data_aux WITH KEY status = yellow_status
+                                                     vendor = lw_data_aux-vendor .
+
+        IF sy-subrc = 0 .
+          MESSAGE e011(zdsd) WITH text-007
+                                  lw_data_aux-vendor
+                      INTO lo_log->gc_msg .
+          me->lo_log->add_syst_message( ).
+
+          CONTINUE .
+        ENDIF.
+
+        READ TABLE lt_data INTO lw_data_aux WITH KEY status = red_status
+                                                     vendor = lw_data_aux-vendor .
+
+        IF sy-subrc = 0 .
+          MESSAGE e011(zdsd) WITH text-007
+                        lw_data_aux-vendor
+            INTO lo_log->gc_msg .
+          me->lo_log->add_syst_message( ).
+
+          CONTINUE .
+        ENDIF.
+
+        READ TABLE lt_data INTO lw_data_aux WITH KEY vendor = lw_data_aux-vendor .
+
+        IF sy-subrc = 0 AND NOT lw_data_aux-belnr IS INITIAL .
+          MESSAGE e011(zdsd) WITH text-007
+                        lw_data_aux-vendor
+            INTO lo_log->gc_msg .
+          me->lo_log->add_syst_message( ).
+
+          CONTINUE .
+        ENDIF.
+
+        lw_vendor_processed-bill = lw_data_aux-bill .
+        lw_vendor_processed-vendor = lw_data_aux-vendor .
+        APPEND lw_vendor_processed TO lt_vendor_processed .
+      ENDIF .
+    ENDLOOP .
+
+    SORT lt_vendor_processed .
+
+    DELETE ADJACENT DUPLICATES FROM lt_vendor_processed COMPARING vendor.
+
+    DESCRIBE TABLE lt_vendor_processed LINES lv_lines .
+
+    IF lv_lines = 0 .
+      MESSAGE e011(zdsd) WITH text-002
+                  INTO lo_log->gc_msg .
+      me->lo_log->add_syst_message( ).
+      lo_log->display( i_popup = abap_true ) .
+      EXIT.
+    ENDIF .
+
+    LOOP AT lt_vendor_processed INTO lw_vendor_processed .
+      CLEAR lv_itemno_acc .
+
+      LOOP AT lt_data ASSIGNING <fs_data> WHERE vendor = lw_vendor_processed-vendor .
+        IF lv_itemno_acc > 990 .
+
+          me->call_bapi( CHANGING c_accountgl = lt_accountgl
+                         c_accountpayable = lt_accountpayable
+                         c_currencyamount = lt_currencyamount
+                         c_bapiparex = lt_bapiparex
+                         c_awkey = lv_awkey ) .
+
+          IF NOT lv_awkey IS INITIAL .
+
+            me->update_gr_after_bapi( i_awkey = lv_awkey
+                                      i_lines_processed = lt_lines_processed ) .
+
+            CLEAR lv_awkey .
+            CLEAR lt_lines_processed[] .
+          ENDIF.
+          CLEAR lv_itemno_acc .
+
+          lv_itemno_acc = lv_itemno_acc + 1  .
+          lw_accountgl-itemno_acc = lv_itemno_acc .
+          lw_accountgl-gl_account = <fs_data>-saknr .
+          lw_accountgl-comp_code = c_company_code  .
+
+          APPEND lw_accountgl TO lt_accountgl .
+
+          lw_currencyamount-itemno_acc   = lv_itemno_acc  .
+          lw_currencyamount-curr_type    = '00'.
+          lw_currencyamount-currency     = c_company_curr.
+          lw_currencyamount-amt_doccur   = <fs_data>-amt .
+          APPEND lw_currencyamount TO lt_currencyamount .
+
+          lv_itemno_acc = lv_itemno_acc + 1  .
+          <fs_data>-buzei = lv_itemno_acc .
+          lw_accountpayable-itemno_acc = lv_itemno_acc .
+          lw_accountpayable-vendor_no = <fs_data>-lifnr .
+          lw_accountpayable-comp_code = c_company_code .
+          lw_accountpayable-sp_gl_ind = c_sp_gl_ind_q .
+
+          APPEND lw_accountpayable TO lt_accountpayable .
+
+          lw_currencyamount-itemno_acc   = lv_itemno_acc .
+          lw_currencyamount-curr_type    = '00'.
+          lw_currencyamount-currency     =  c_company_curr.
+          lw_currencyamount-amt_doccur   = <fs_data>-amt * -1 .
+          APPEND lw_currencyamount TO lt_currencyamount .
+
+          lw_bapiparex-structure  = 'POSTING_KEY'.
+          lw_bapiparex-valuepart1 = lv_itemno_acc .
+          lw_bapiparex-valuepart2 = c_posting_key .
+          APPEND lw_bapiparex TO lt_bapiparex.
+          MOVE-CORRESPONDING <fs_data> TO lw_lines_processed .
+          APPEND lw_lines_processed TO lt_lines_processed .
+        ELSE.
+          lv_itemno_acc = lv_itemno_acc + 1  .
+          lw_accountgl-itemno_acc = lv_itemno_acc .
+          lw_accountgl-gl_account = <fs_data>-saknr .
+          lw_accountgl-comp_code = c_company_code  .
+
+          APPEND lw_accountgl TO lt_accountgl .
+
+          lw_currencyamount-itemno_acc   = lv_itemno_acc  .
+          lw_currencyamount-curr_type    = '00'.
+          lw_currencyamount-currency     = c_company_curr.
+          lw_currencyamount-amt_doccur   = <fs_data>-amt .
+          APPEND lw_currencyamount TO lt_currencyamount .
+
+          lv_itemno_acc = lv_itemno_acc + 1  .
+          <fs_data>-buzei = lv_itemno_acc .
+          lw_accountpayable-itemno_acc = lv_itemno_acc .
+          lw_accountpayable-vendor_no = <fs_data>-lifnr .
+          lw_accountpayable-comp_code = c_company_code .
+          lw_accountpayable-sp_gl_ind = c_sp_gl_ind_q .
+
+          APPEND lw_accountpayable TO lt_accountpayable .
+
+          lw_currencyamount-itemno_acc   = lv_itemno_acc .
+          lw_currencyamount-curr_type    = '00'.
+          lw_currencyamount-currency     =  c_company_curr.
+          lw_currencyamount-amt_doccur   = <fs_data>-amt * -1 .
+          APPEND lw_currencyamount TO lt_currencyamount .
+
+          lw_bapiparex-structure  = 'POSTING_KEY'.
+          lw_bapiparex-valuepart1 = lv_itemno_acc .
+          lw_bapiparex-valuepart2 = c_posting_key .
+          APPEND lw_bapiparex TO lt_bapiparex.
+          MOVE-CORRESPONDING <fs_data> TO lw_lines_processed .
+          APPEND lw_lines_processed TO lt_lines_processed .
+        ENDIF .
+      ENDLOOP .
+
+      me->call_bapi( CHANGING   c_accountgl = lt_accountgl
+                                c_accountpayable = lt_accountpayable
+                                c_currencyamount = lt_currencyamount
+                                c_bapiparex = lt_bapiparex
+                                c_awkey = lv_awkey ) .
+
+      IF NOT lv_awkey IS INITIAL .
+
+        me->update_gr_after_bapi( i_awkey = lv_awkey
+                                  i_lines_processed = lt_lines_processed ) .
+        CLEAR lt_lines_processed[].
+      ENDIF.
+    ENDLOOP.
+
+    me->update_status( ) .
+    lo_log->display( i_popup = abap_true ) .
+    lo_alv->refresh( refresh_mode = if_salv_c_refresh=>full ) .
+  ENDMETHOD .                    "create_fi_doc
+  METHOD call_bapi .
+    DATA lw_header TYPE bapiache09  .
+    DATA lt_return TYPE bapiret2_tab .
+    DATA lt_bapiparex TYPE STANDARD TABLE OF bapiparex .
+    DATA lw_bapiparex TYPE bapiparex .
+
+    c_header-comp_code = c_company_code .
+    c_header-doc_date = sy-datum .
+    c_header-pstng_date = sy-datum .
+    c_header-trans_date = sy-datum .
+    c_header-doc_type = c_doc_type_sa .
+    c_header-username = sy-uname .
+
+
+    CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+      EXPORTING
+        documentheader = c_header
+      IMPORTING
+        obj_key        = c_awkey
+      TABLES
+        accountgl      = c_accountgl
+        accountpayable = c_accountpayable
+        currencyamount = c_currencyamount
+        return         = lt_return
+        extension2     = c_bapiparex.
+
+    IF c_awkey NE '$' .
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'.
+
+    ELSE.
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    ENDIF.
+
+    lo_log->add_messages( t_msg = lt_return ) .
+    CLEAR c_accountgl[].
+    CLEAR c_accountpayable[].
+    CLEAR c_currencyamount[].
+    CLEAR c_bapiparex[] .
+  ENDMETHOD .                    "call_bapi
+
+  METHOD display_alv .
+    DATA: lx_msg TYPE REF TO cx_salv_msg.
+    DATA lo_functions TYPE REF TO cl_salv_functions.
+    DATA lo_selections TYPE REF TO cl_salv_selections.
+    DATA lo_columns   TYPE REF TO cl_salv_columns_table .
+    DATA lo_column    TYPE REF TO cl_salv_column .
+
+    DATA lo_col TYPE REF TO cl_salv_column_table .
+
+
+    DATA: lo_events TYPE REF TO cl_salv_events_table.
+
+    IF NOT full_screen IS INITIAL .
+
+      IF NOT lo_alv IS BOUND .
+        TRY.
+            cl_salv_table=>factory(
+              IMPORTING
+                r_salv_table = lo_alv
+              CHANGING
+                t_table      = lt_data ).
+          CATCH cx_salv_msg INTO lx_msg.
+        ENDTRY.
+      ENDIF.
+
+      lo_functions = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+
+      TRY.
+        lo_columns = lo_alv->get_columns( ).
+**Define Technical Fields
+        lo_column = lo_columns->get_column( 'STATUS' ).
+        lo_column->set_medium_text( 'Status' ) .
+
+*        lo_column = lo_columns->get_column( 'MANDT' ).
+*        lo_column->set_technical( abap_true ).
+
+        TRY.
+            TRY.
+                lo_col ?= lo_columns->get_column( 'BELNR' ).
+              CATCH cx_salv_not_found.
+            ENDTRY.
+
+            CALL METHOD lo_col->set_cell_type
+              EXPORTING
+                value = if_salv_c_cell_type=>hotspot.
+            .
+          CATCH cx_salv_data_error .
+        ENDTRY.
+
+      ENDTRY .
+
+
+      lo_selections = lo_alv->get_selections( ).
+
+      lo_selections->set_selection_mode( if_salv_c_selection_mode=>row_column ).
+
+      lo_alv->set_screen_status(
+        pfstatus      =  'SALV_STANDARD'
+        report        =  sy-repid
+        set_functions = lo_alv->c_functions_all ).
+
+      lo_events = lo_alv->get_event( ).
+
+*      CREATE OBJECT lo_events.
+
+*... §6.1 register to the event USER_COMMAND
+      SET HANDLER lo_application->on_user_command FOR lo_events.
+      SET HANDLER lo_application->on_link_click FOR lo_events.
+
+      lo_alv->display( ) .
+    ENDIF .
+  ENDMETHOD .                    "display_alv
+
+  METHOD handle_toolbar.
+
+    CONSTANTS:
+*  CONSTANTS FOR BUTTON TYPE
+      c_check                   TYPE ui_func VALUE 'CHECK' ,
+      c_save                    TYPE ui_func VALUE 'SAVE' ,
+      c_button_normal           TYPE i VALUE 0,
+      c_menu_and_default_button TYPE i VALUE 1,
+      c_menu                    TYPE i VALUE 2,
+      c_separator               TYPE i VALUE 3,
+      c_radio_button            TYPE i VALUE 4,
+      c_checkbox                TYPE i VALUE 5,
+      c_menu_entry              TYPE i VALUE 6.
+
+    DATA lw_toolbar  TYPE stb_button.
+
+*   APPEND SEPARATOR TO THE NORMAL TOOLBAR
+    CLEAR lw_toolbar.
+    MOVE c_separator TO lw_toolbar-butn_type.
+    APPEND lw_toolbar TO e_object->mt_toolbar.
+
+    CLEAR lw_toolbar.
+    MOVE c_check        TO lw_toolbar-function.
+    MOVE icon_check     TO lw_toolbar-icon.
+    MOVE text-106       TO lw_toolbar-quickinfo.
+    MOVE text-104       TO lw_toolbar-text.
+    MOVE ' '            TO lw_toolbar-disabled.
+    APPEND lw_toolbar   TO e_object->mt_toolbar.
+
+*This code is for giving space in between two icons
+    CLEAR lw_toolbar.
+    MOVE c_separator TO lw_toolbar-butn_type.
+    APPEND lw_toolbar TO e_object->mt_toolbar.
+
+    CLEAR lw_toolbar.
+    MOVE c_save             TO lw_toolbar-function.
+    MOVE icon_status_booked TO lw_toolbar-icon.
+    MOVE text-105           TO lw_toolbar-quickinfo.
+    MOVE text-105           TO lw_toolbar-text.
+    MOVE ' '                TO lw_toolbar-disabled.
+    APPEND lw_toolbar       TO e_object->mt_toolbar.
+
+  ENDMETHOD .                    "handle_hotspot_click
+
+  METHOD on_link_click .
+    DATA lt_bkpf TYPE STANDARD TABLE OF bkpf .
+
+    DATA lw_bkpf TYPE bkpf .
+    DATA lw_data_aux TYPE struct_zzscnn_gr  .
+
+    CASE  column.
+      WHEN 'BELNR' .
+
+        READ TABLE lt_data INTO lw_data_aux INDEX row .
+
+        IF sy-subrc = 0 .
+          SELECT bukrs belnr gjahr
+            FROM bkpf
+            INTO CORRESPONDING FIELDS OF TABLE lt_bkpf
+            WHERE belnr = lw_data_aux-belnr AND
+                  gjahr = lw_data_aux-gjahr AND
+                  bukrs = lw_data_aux-bukrs .
+          IF sy-subrc = 0 .
+
+            SORT lt_bkpf BY gjahr ASCENDING .
+
+            READ TABLE lt_bkpf INTO lw_bkpf INDEX 1 .
+
+            SET PARAMETER ID: 'BLN' FIELD lw_bkpf-belnr ,
+                              'BUK' FIELD lw_bkpf-bukrs ,
+                              'GJR' FIELD lw_bkpf-gjahr .
+            CALL TRANSACTION  'FB03' AND SKIP FIRST SCREEN .
+
+
+          ENDIF .
+        ENDIF.
+    ENDCASE.
+  ENDMETHOD.                    "on_link_click
+  METHOD on_user_command .
+
+    CASE e_salv_function .
+      WHEN 'UPL_FILE' .
+        me->upload_file( ) .
+      WHEN 'UPD_DATA' .
+        me->update_data( ) .
+      WHEN 'CRT_FI_DOC' .
+        me->create_fi_doc( ) .
+    ENDCASE .
+
+    lo_log->refresh( ) .
+  ENDMETHOD .                    "on_user_command
+
+  METHOD upload_file .
+    DATA lo_root TYPE REF TO cx_root .
+    DATA lx_msg TYPE char255 .
+
+    DATA lt_upload_data TYPE STANDARD TABLE OF zzl_zzscnngr.
+    DATA lt_data_dup    TYPE STANDARD TABLE OF struct_dup_zzscnn_gr .
+    DATA lt_update_data TYPE STANDARD TABLE OF zzscnn_gr .
+    DATA lw_update_data TYPE zzscnn_gr .
+    DATA lw_upload_data TYPE zzl_zzscnngr.
+    DATA lw_data        TYPE struct_zzscnn_gr  .
+    DATA: l_qry_str TYPE string.
+    DATA lv_curr TYPE bapicurr_d .
+    DATA lv_error_flag TYPE flag  VALUE abap_false.
+
+    CONCATENATE  ' "select inv_trans_detail.warehouse, bill, trans_date, inv_trans_detail.item_code, seq_no, order_no, vendor, supplier_name, item_name, '
+                 ' ITEM_spec, DRAW_NO, qty, price, amt, voucher_no from inv_trans_detail '
+                 ' inner join epd_item_master on inv_trans_detail.item_code  = epd_item_master.item_code '
+                 ' inner join acp_supplier on inv_trans_detail.vendor = acp_supplier.supplier_no '
+                 ' where inv_trans_detail.trans_type = ''$PUR'' and trans_date >= '
+                 ''''
+                 p_sdate
+                 ''''
+                 '" queryout'
+                 ' '
+                 p_file
+                 ' -S 192.168.76.252 -c -U capms70 -P rxgzz'
+                 INTO l_qry_str RESPECTING BLANKS.
+
+    CALL METHOD cl_gui_frontend_services=>execute
+      EXPORTING
+        application            = 'bcp'
+        parameter              = l_qry_str
+        minimized              = 'X'
+        synchronous            = 'X'
+      EXCEPTIONS
+        cntl_error             = 1
+        error_no_gui           = 2
+        bad_parameter          = 3
+        file_not_found         = 4
+        path_not_found         = 5
+        file_extension_unknown = 6
+        error_execute_failed   = 7
+        synchronous_failed     = 8
+        not_supported_by_gui   = 9
+        OTHERS                 = 10.
+    IF sy-subrc <> 0.
+      me->lo_log->add_syst_message( ).
+      lo_log->display( i_popup = abap_true ) .
+      EXIT.
+    ENDIF.
+
+    CALL METHOD cl_gui_frontend_services=>gui_upload
+      EXPORTING
+        filename                = p_file
+        filetype                = 'DAT'
+        codepage                = '8400'
+      CHANGING
+        data_tab                = lt_upload_data
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        not_supported_by_gui    = 17
+        error_no_gui            = 18
+        OTHERS                  = 19.
+    IF sy-subrc <> 0.
+      me->lo_log->add_syst_message( ).
+      lo_log->display( i_popup = abap_true ) .
+      EXIT.
+    ENDIF.
+
+    LOOP AT lt_upload_data INTO lw_upload_data .
+      CLEAR: lw_data , lw_update_data .
+      TRY .
+
+          REPLACE ALL OCCURRENCES OF SUBSTRING '/' IN lw_upload_data-trans_date WITH ''.
+
+          lw_data-trans_date = lw_upload_data-trans_date .
+
+          MOVE-CORRESPONDING lw_upload_data TO lw_update_data .
+
+
+
+        CATCH cx_root INTO lo_root .
+
+          DATA: lv_expo      TYPE qsollwerte  .
+
+          MOVE lw_upload_data-price TO lv_expo.
+          MOVE lv_expo TO lw_update_data-price .
+
+          MOVE lw_upload_data-amt TO lw_update_data-amt .
+
+
+      ENDTRY .
+      APPEND lw_update_data TO lt_update_data .
+    ENDLOOP .
+
+    TRY .
+
+        IF NOT lt_update_data IS INITIAL .
+
+          SELECT bill
+            FROM zzscnn_gr
+            INTO TABLE lt_data_dup
+            FOR ALL ENTRIES IN lt_update_data
+            WHERE bill = lt_update_data-bill .
+
+
+          SORT lt_data_dup BY bill .
+          DELETE ADJACENT DUPLICATES FROM lt_data_dup COMPARING bill .
+
+          LOOP AT lt_update_data INTO lw_update_data.
+
+            READ TABLE lt_data_dup BINARY SEARCH WITH KEY bill = lw_upload_data-bill
+                                  TRANSPORTING NO FIELDS .
+            IF sy-subrc = 0 .
+              DELETE lt_update_data WHERE bill = lw_update_data-bill .
+            ELSE.
+              MOVE-CORRESPONDING lw_update_data TO lw_data .
+              lw_data-status = red_status .
+              APPEND lw_data TO lt_data .
+              CLEAR lw_data .
+            ENDIF .
+          ENDLOOP.
+        ENDIF.
+
+
+        IF lines( lt_update_data ) > 0  .
+
+          MODIFY zzscnn_gr FROM TABLE lt_update_data .
+
+          MESSAGE s011(zdsd) WITH text-003
+                                 p_file
+                            INTO lo_log->gc_msg .
+          me->lo_log->add_syst_message( ).
+        ELSE.
+          MESSAGE w011(zdsd) WITH text-008
+                                  p_file
+                  INTO lo_log->gc_msg .
+          me->lo_log->add_syst_message( ).
+        ENDIF .
+      CATCH cx_root INTO lo_root .
+
+        CALL METHOD lo_root->if_message~get_text
+          RECEIVING
+            result = lx_msg.
+
+        MESSAGE e011(zdsd) WITH lx_msg
+                          INTO lo_log->gc_msg .
+        me->lo_log->add_syst_message( ).
+    ENDTRY .
+*    ENDIF .
+    lo_log->display( i_popup = 'X' ) .
+    lo_alv->refresh( refresh_mode = if_salv_c_refresh=>full ) .
+  ENDMETHOD .                    "upload_file
+
+  METHOD get_data_from_db .
+
+*    SELECT warehouse bill trans_date item_code seq_no
+*           order_no vendor vendor_name item_name item_spec
+*           draw_no qty price amt voucher_no lifnr saknr
+*           belnr augbl
+    SELECT *
+    FROM zzscnn_gr
+    INTO CORRESPONDING FIELDS OF TABLE lt_data
+    WHERE belnr EQ ' '
+      AND bill IN s_bill
+      AND order_no IN s_ordern
+      AND vendor  IN s_vendor
+      AND trans_date IN s_tdate .
+
+    SORT lt_data BY bill .
+
+  ENDMETHOD.                    "get_data_from_db
+  METHOD update_data .
+    DATA lo_selections TYPE REF TO cl_salv_selections.
+
+    DATA lt_rows   TYPE salv_t_row .
+    DATA lw_row    TYPE i .
+
+    DATA vendor TYPE lifnr .
+    DATA saknr  TYPE saknr .
+
+    DATA lv_lines TYPE  i .
+    FIELD-SYMBOLS <fs_data> TYPE struct_zzscnn_gr  .
+
+    LOOP AT me->lt_data ASSIGNING <fs_data> .
+
+      SELECT SINGLE saknr
+        INTO <fs_data>-saknr
+        FROM zzscnngr_saknr
+        WHERE item_code = <fs_data>-item_code.
+
+      SELECT SINGLE lifnr
+        INTO <fs_data>-lifnr
+        FROM lfb1
+        WHERE altkn = <fs_data>-vendor.
+
+      IF NOT <fs_data>-saknr IS INITIAL OR
+         NOT <fs_data>-lifnr IS INITIAL .
+        me->update_gr( i_gr = <fs_data>
+                       key = abap_true ) .
+      ENDIF.
+    ENDLOOP .
+
+    MESSAGE s011(zdsd) WITH text-006
+                           INTO lo_log->gc_msg .
+
+    me->lo_log->add_syst_message( ).
+
+    lo_log->display( i_popup = abap_true ) .
+
+    me->update_status( ) .
+    lo_alv->refresh( refresh_mode = if_salv_c_refresh=>full ) .
+
+  ENDMETHOD .                    "update_data
+
+
+  METHOD update_status .
+    FIELD-SYMBOLS <fs_data> TYPE struct_zzscnn_gr .
+
+    LOOP AT lt_data ASSIGNING <fs_data> .
+      IF NOT <fs_data>-lifnr IS INITIAL AND NOT <fs_data>-saknr IS INITIAL .
+        <fs_data>-status = green_status  .
+      ELSEIF ( NOT <fs_data>-lifnr IS INITIAL AND <fs_data>-saknr IS INITIAL ) OR
+             ( <fs_data>-lifnr IS INITIAL AND NOT <fs_data>-saknr IS INITIAL ) .
+        <fs_data>-status = yellow_status  .
+      ELSE.
+        <fs_data>-status = red_status .
+      ENDIF .
+    ENDLOOP .
+  ENDMETHOD .                    "update_status
+
+  METHOD update_gr .
+
+
+    IF NOT key IS INITIAL .
+
+      UPDATE zzscnn_gr
+        SET lifnr = i_gr-lifnr
+            saknr = i_gr-saknr
+            belnr = i_gr-belnr
+            buzei = i_gr-buzei
+        WHERE warehouse = i_gr-warehouse AND
+              bill = i_gr-bill AND
+              trans_date = i_gr-trans_date AND
+              item_code = i_gr-item_code AND
+              seq_no = i_gr-seq_no AND
+              order_no = i_gr-order_no .
+
+      IF sy-subrc = 0.
+        r_update = abap_true .
+      ENDIF.
+
+    ELSEIF NOT item_code IS INITIAL .
+
+      UPDATE zzscnn_gr
+       SET saknr =  i_gr-saknr
+       WHERE item_code = i_gr-item_code .
+
+      IF sy-subrc = 0.
+        r_update = abap_true .
+      ENDIF.
+
+    ELSEIF NOT vendor IS INITIAL .
+
+      UPDATE zzscnn_gr
+       SET belnr =  i_gr-belnr
+       WHERE vendor = i_gr-vendor.
+
+      IF sy-subrc = 0.
+        r_update = abap_true .
+      ENDIF.
+
+    ELSE.
+      UPDATE zzscnn_gr
+        SET lifnr =  i_gr-lifnr
+            saknr =  i_gr-saknr
+            belnr =  i_gr-belnr
+            buzei =  i_gr-buzei
+        WHERE warehouse = i_gr-warehouse AND
+              bill = i_gr-bill AND
+              vendor = i_gr-vendor .
+
+      IF sy-subrc = 0.
+        r_update = abap_true .
+      ENDIF.
+
+    ENDIF .
+  ENDMETHOD .                    "update_gr
+  METHOD update_gr_after_bapi .
+    FIELD-SYMBOLS <fs_lines_processed> TYPE struct_lines_proc_zzscnn_gr .
+    FIELD-SYMBOLS <fs_data> TYPE struct_zzscnn_gr .
+
+    LOOP AT i_lines_processed ASSIGNING <fs_lines_processed> .
+      UPDATE zzscnn_gr
+      SET belnr = i_awkey(10)
+          buzei = <fs_lines_processed>-buzei
+          gjahr = i_awkey+14(4)
+          bukrs = i_awkey+10(4)
+      WHERE warehouse = <fs_lines_processed>-warehouse AND
+            bill = <fs_lines_processed>-bill AND
+            trans_date = <fs_lines_processed>-trans_date AND
+            item_code = <fs_lines_processed>-item_code AND
+            seq_no = <fs_lines_processed>-seq_no AND
+            order_no = <fs_lines_processed>-order_no AND
+            vendor = <fs_lines_processed>-vendor .
+
+      IF sy-subrc = 0 .
+
+        LOOP AT lt_data ASSIGNING <fs_data> WHERE  warehouse = <fs_lines_processed>-warehouse AND
+                                                   bill = <fs_lines_processed>-bill AND
+                                                   trans_date = <fs_lines_processed>-trans_date AND
+                                                   item_code = <fs_lines_processed>-item_code AND
+                                                   seq_no = <fs_lines_processed>-seq_no AND
+                                                   order_no = <fs_lines_processed>-order_no AND
+                                                   vendor = <fs_lines_processed>-vendor .
+
+          <fs_data>-belnr = i_awkey(10) .
+          <fs_data>-gjahr = i_awkey+14(4) .
+          <fs_data>-bukrs = i_awkey+10(4) .
+          <fs_data>-buzei = <fs_lines_processed>-buzei .
+        ENDLOOP .
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD .                    "update_gr_after_bapi
+ENDCLASS .                    "lcl_application IMPLEMENTATION
+
+----------------------------------------------------------------------------------
+Extracted by Mass Download version 1.5.5 - E.G.Mellodew. 1998-2016. Sap Release 731
