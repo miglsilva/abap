@@ -1,0 +1,178 @@
+class ZCL_CALL_TRANSACTION definition .
+  public
+  final
+  create public .
+
+public section.
+
+  methods CONSTRUCTOR
+    importing
+      I_TRANS_CODE type TCODE
+      I_PROCE_MODE type CHAR1
+      I_UPDAT_MODE type CHAR1
+      I_GROUP type APQ_GRPN optional .
+  methods BDC_DYNPRO
+    importing
+      I_PROGRAM type BDC_PROG
+      I_DYNPRO type BDC_DYNR .
+  methods BDC_FIELD
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY .
+  methods BDC_FIELD_AMOUNT
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY
+      I_CURR type WAERS .
+  methods BDC_FIELD_QUANTITY
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY
+      I_UNIT type UNIT .
+  methods TRANSACTION
+    exporting
+      ET_BAPIRET2 type BAPIRET2_T .
+  methods BDC_FIELD_DATUM
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY .
+  methods BDC_FIELD_TIME
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY
+      I_UNIT type UNIT .
+  methods BDC_FIELD_UNIT
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY .
+  methods BDC_FIELD_DEC
+    importing
+      I_FNAM type ANY
+      I_FVAL type ANY .
+
+
+private section.
+
+  data TRANS_CODE type TCODE .
+  data PROCE_MODE type CTU_MODE .
+  data UPDAT_MODE type CHAR1 .
+  data GT_BDCDATA type CK_T_BDCDATA .
+  data GL_BDCDATA type BDCDATA .
+  data GROUP type APQ_GRPN .
+
+protected section.
+endclass ZCL_CALL_TRANSACTION definition .
+
+method BDC_DYNPRO.
+    CLEAR: gl_bdcdata  .
+    MOVE: i_program TO gl_bdcdata-program,
+          i_dynpro  TO gl_bdcdata-dynpro,
+          'X'       TO gl_bdcdata-dynbegin.
+    APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_AMOUNT.
+    DATA: l_montante TYPE dmbtr  .
+  CLEAR: gl_bdcdata .
+
+  l_montante =  i_fval.
+  gl_bdcdata-fnam = i_fnam.
+  WRITE l_montante TO gl_bdcdata-fval CURRENCY i_curr.
+  CONDENSE gl_bdcdata-fval.
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_DATUM.
+    DATA: l_datum TYPE datum  .
+  CLEAR: gl_bdcdata .
+  MOVE  i_fval TO l_datum .
+  WRITE l_datum  TO  gl_bdcdata-fval  .
+  gl_bdcdata-fnam = i_fnam.
+
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_DEC.
+    DATA: l_mahn1(5) TYPE c  .
+
+  CLEAR: gl_bdcdata .
+  l_mahn1 = i_fval.
+  WRITE l_mahn1 TO  gl_bdcdata-fval.
+  CONDENSE gl_bdcdata-fval.
+  gl_bdcdata-fnam = i_fnam.
+
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_QUANTITY.
+    DATA: l_quant TYPE menge_d.
+  CLEAR: gl_bdcdata .
+  gl_bdcdata-fnam = i_fnam.
+  l_quant = i_fval .
+  WRITE  l_quant  TO gl_bdcdata-fval UNIT i_unit.
+  CONDENSE gl_bdcdata-fval.
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_TIME.
+    DATA: l_time TYPE catshours .
+  CLEAR: gl_bdcdata .
+  gl_bdcdata-fnam = i_fnam.
+  l_time = i_fval .
+  WRITE  l_time  TO gl_bdcdata-fval UNIT i_unit.
+  CONDENSE gl_bdcdata-fval.
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD_UNIT.
+    DATA: l_meins TYPE meins .
+  CLEAR: gl_bdcdata .
+  MOVE  i_fval TO l_meins .
+  WRITE l_meins  TO  gl_bdcdata-fval  .
+  gl_bdcdata-fnam = i_fnam.
+
+  APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method BDC_FIELD.
+      CLEAR: gl_bdcdata .
+    gl_bdcdata-fnam = i_fnam.
+    gl_bdcdata-fval = i_fval.
+    APPEND gl_bdcdata TO gt_bdcdata.
+endmethod.
+
+method CONSTRUCTOR.
+    me->trans_code = i_trans_code.
+  me->proce_mode = i_proce_mode.
+  me->updat_mode = i_updat_mode.
+  me->group = i_group .
+endmethod.
+
+METHOD transaction.
+  DATA: lt_bdcmsgcoll TYPE tab_bdcmsgcoll,
+     lw_optio_stru   TYPE ctu_params.
+
+  lw_optio_stru-dismode  = me->proce_mode.
+  lw_optio_stru-updmode  = me->updat_mode.
+  lw_optio_stru-racommit = 'X'.
+
+
+
+  IF group IS NOT INITIAL .
+    CALL FUNCTION 'BDC_INSERT'
+      EXPORTING
+        tcode     = trans_code
+      TABLES
+        dynprotab = gt_bdcdata.
+  ELSE .
+    CALL TRANSACTION trans_code USING gt_bdcdata
+          MESSAGES INTO lt_bdcmsgcoll
+          OPTIONS FROM  lw_optio_stru.
+    CALL FUNCTION 'CONVERT_BDCMSGCOLL_TO_BAPIRET2'
+      TABLES
+        imt_bdcmsgcoll = lt_bdcmsgcoll
+        ext_return     = et_bapiret2.
+  ENDIF .
+
+  CLEAR: gt_bdcdata .
+ENDMETHOD.
