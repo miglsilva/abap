@@ -1,0 +1,1515 @@
+**&---------------------------------------------------------------------*
+*& Report  ZDGTR_MAINTAIN_CUSTOMNR
+*----------------------------------------------------------------------*
+* OBJECT NAME           : ZDGTR_MAINTAIN_CUSTOMNR
+* PROGRAM TITLE         : UPLOAD CUSTOM number from CSV file
+* AUTHOR                : Arni Antal (Stefan Beck)
+* DATE                  : 11/09/2014
+* RICEFW OBJECT         : DGT_1.1.1_FSP_61
+* CHANGE REQUEST NUMBER :
+* DESCRIPTION           : Because of required mass changes in the
+*                         custom tariff, we need a mass upload program
+*                         this changes. This program allows test and
+*                         real changes in custom tariffs.
+*----------------------------------------------------------------------*
+* CHANGE HISTORY LOG                                                   *
+*----------------------------------------------------------------------*
+* MOD.NO. |  DATE    | USER          | CHANGE REFERENCE
+*--------------------------------------------------------------------*
+*         |19/09/2014| DAEBECKS      | Programm creation
+*----------------------------------------------------------------------
+*         |21/01/2015| DATSZIGETI    | Redesign after FSP changes 1.1, 1.2
+*-----------------------------------------------------------------------
+* MOD-001 |28/03/2016| EXT_SAP_MILM  | Extend program second unit measure
+*----------------------------------------------------------------------
+
+REPORT zdgtr_maintain_customnr.
+
+*&---------------------------------------------------------------------*
+* Type Definitions
+*&---------------------------------------------------------------------*
+
+*TYPES  ts_input_file_rawstr(4096) type c.
+
+*TYPES: tt_input_file_rawstr TYPE TABLE OF ts_input_file_rawstr.
+
+TYPES: BEGIN OF ts_input_file_splitstr,
+        str1_language             TYPE char128,
+        str2_country              TYPE char128,
+        str3_impcode              TYPE char128,
+        str4_description          TYPE string,
+        str5_uom                  TYPE char128,
+        str6_unused_add_info      TYPE char128,
+        str7_unused_second_uom    TYPE char128,
+        str8_unused_mineral_oil   TYPE char128,
+  END OF ts_input_file_splitstr.
+
+TYPES: tt_input_file_splitstr TYPE TABLE OF ts_input_file_splitstr.
+
+TYPES: BEGIN OF ts_output_logfile,
+        str0_input_file_line_counter  TYPE i,
+        str1_language                 TYPE char4,
+        str2_country                  TYPE char4,
+        str3_impcode                  TYPE stawn,
+        str4_status                   TYPE c,
+        str5_message                  TYPE char128,
+  END OF ts_output_logfile.
+
+TYPES: tt_output_logfile TYPE TABLE OF ts_output_logfile.
+
+TYPES: BEGIN OF ts_marc,
+        matnr  TYPE matnr,
+        werks  TYPE werks_d,
+  END OF ts_marc.
+
+TYPES: tt_marc TYPE TABLE OF ts_marc.
+
+TYPES: BEGIN OF ts_land1,
+        land1 TYPE land1,
+  END OF ts_land1.
+
+TYPES: tt_land1 TYPE TABLE OF ts_land1.
+
+
+*&---------------------------------------------------------------------*
+* Data Declarations
+*&---------------------------------------------------------------------*
+
+* constants for log message status values
+CONSTANTS:
+      lc_msg_success  TYPE c VALUE '3',
+      lc_msg_error    TYPE c VALUE '1',
+      lc_msg_warning  TYPE c VALUE '2'.
+
+* constans for the allowed countries
+CONSTANTS:
+      lc_land1_eu       TYPE land1 VALUE 'EU',
+      lc_land1_ch       TYPE land1 VALUE 'CH',
+      lc_land1_no       TYPE land1 VALUE 'NO'.
+DATA: lv_cnt_selscreen  TYPE land1.
+DATA: lt_relevant_land1 TYPE tt_land1.
+DATA: ls_relevant_land1 TYPE ts_land1.
+
+
+DATA: lv_returncode              TYPE i.
+DATA: lv_returncode_str          TYPE c LENGTH 2.
+DATA: lv_can_continue_processing TYPE boolean.
+DATA: ls_logmessage              TYPE char128.
+
+DATA: lv_input_file_line_counter TYPE i.
+
+
+*DATA:  lt_input_file_rawstr TYPE tt_input_file_rawstr.
+
+DATA:  lt_input_file_splitstr TYPE tt_input_file_splitstr,
+       ls_input_file_splitstr TYPE ts_input_file_splitstr.
+
+DATA:  ls_input_file_t604     TYPE t604,
+       ls_input_file_t604t    TYPE t604t.
+
+DATA:  ls_sapdb_t604     TYPE t604,
+       ls_sapdb_t604t    TYPE t604t.
+
+FIELD-SYMBOLS:
+*     <ls_input_file_rawstr>    TYPE ts_input_file_rawstr,
+     <ls_input_file_splitstr>  TYPE ts_input_file_splitstr.
+
+DATA:  lt_output_logfile TYPE tt_output_logfile,
+       ls_output_logfile TYPE ts_output_logfile.
+
+FIELD-SYMBOLS:
+     <ls_output_logfile>  TYPE ts_output_logfile.
+
+DATA: lt_marc TYPE tt_marc,
+      ls_marc TYPE ts_marc.
+
+FIELD-SYMBOLS:
+     <ls_marc>  TYPE ts_marc.
+
+DATA: ls_marm TYPE marm.
+DATA: lv_matnr_uom_allowed_check_ok TYPE boolean.
+DATA: lv_uomstr TYPE c LENGTH 3.
+
+DATA: lv_tabixc3  TYPE c LENGTH 3.
+
+DATA: lv_rollback_needed TYPE boolean.
+DATA: lv_db_update_started TYPE boolean.
+
+
+*&---------------------------------------------------------------------*
+* Selection Screen definition
+*&---------------------------------------------------------------------*
+
+* Selection Screen, radio buttons for Country
+SELECTION-SCREEN BEGIN OF BLOCK sbcountry WITH FRAME TITLE text-001.
+PARAMETERS: p_cnt_eu  RADIOBUTTON GROUP srcy DEFAULT 'X'.
+PARAMETERS: p_cnt_ch  RADIOBUTTON GROUP srcy.
+PARAMETERS: p_cnt_no  RADIOBUTTON GROUP srcy.
+SELECTION-SCREEN END OF BLOCK sbcountry.
+
+* Selection Screen, Language
+SELECTION-SCREEN BEGIN OF BLOCK sblang WITH FRAME TITLE text-002.
+PARAMETERS: p_langu   TYPE  spras DEFAULT 'E'.
+SELECTION-SCREEN END OF BLOCK sblang.
+
+* Selection Screen, Processing Mode
+SELECTION-SCREEN BEGIN OF BLOCK sbprocmode WITH FRAME TITLE text-003.
+PARAMETERS: p_modnew  RADIOBUTTON GROUP srmd DEFAULT 'X'. "  processing mode - new
+PARAMETERS: p_modcht  RADIOBUTTON GROUP srmd.             "  processing mode - change, text
+PARAMETERS: p_modchu  RADIOBUTTON GROUP srmd.             "  processing mode - change, UOM
+PARAMETERS: p_moddel  RADIOBUTTON GROUP srmd.             "  processing mode - delete
+SELECTION-SCREEN END OF BLOCK sbprocmode.
+
+* Selection Screen, Input / Output Files
+SELECTION-SCREEN BEGIN OF BLOCK sbiofiles WITH FRAME TITLE text-004.
+PARAMETERS: p_infile TYPE localfile OBLIGATORY DEFAULT 'C:\Users\datszigetig\Desktop\test_03_delete.txt'.
+*PARAMETERS: p_oufile TYPE LOCALFILE OBLIGATORY DEFAULT 'C:\Users\datszigetig\Desktop\DGT_111_FSP_61_log.csv'.
+PARAMETERS: p_ftyp TYPE fileformat DEFAULT 'ASC'.
+SELECTION-SCREEN END OF BLOCK sbiofiles.
+
+* Selection Screen, Test mode checkbox
+PARAMETERS: p_test   AS CHECKBOX DEFAULT 'X'.
+
+
+
+
+*&---------------------------------------------------------------------*
+* At Selection Screen
+*&---------------------------------------------------------------------*
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_infile.
+* Dialogue for input file
+  CALL FUNCTION 'KD_GET_FILENAME_ON_F4'
+*      EXPORTING
+*           PROGRAM_NAME  = SYST-REPID
+*           DYNPRO_NUMBER = SYST-DYNNR
+*           FIELD_NAME    = ' '
+*           STATIC        = ' '
+*           MASK          = ' '
+       CHANGING
+            file_name     =  p_infile
+      EXCEPTIONS
+           mask_too_long = 1
+           OTHERS        = 2.
+
+*
+*AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_oufile.
+** Dialogue for input file
+*  CALL FUNCTION 'KD_GET_FILENAME_ON_F4'
+**      EXPORTING
+**           PROGRAM_NAME  = SYST-REPID
+**           DYNPRO_NUMBER = SYST-DYNNR
+**           FIELD_NAME    = ' '
+**           STATIC        = ' '
+**           MASK          = ' '
+*       CHANGING
+*            file_name     =  p_oufile
+*      EXCEPTIONS
+*           mask_too_long = 1
+*           OTHERS        = 2.
+
+*&---------------------------------------------------------------------*
+* Start of Selection
+*&---------------------------------------------------------------------*
+
+START-OF-SELECTION.
+
+* initialization
+  lv_returncode = 0.
+  lv_can_continue_processing = abap_true.
+
+* try to load input file into internal table
+  PERFORM load_input_file_raw
+            USING    p_infile
+                     p_ftyp
+            CHANGING lt_input_file_splitstr
+                      lv_returncode.
+
+* check if the input file could be imported successfully
+  IF ( lv_returncode <> 0 ).
+
+* could not open / read / convert input file, add log message
+    CLEAR ls_input_file_splitstr.
+    lv_returncode_str = lv_returncode.
+    CONCATENATE 'Input file opening/reading error : ' lv_returncode_str INTO ls_logmessage.
+    PERFORM add_log_message
+              USING ls_input_file_splitstr
+                    lc_msg_error
+                    ls_logmessage.
+
+  ELSE.
+* input file could be imported successfully, processing can start
+
+* convert country radio button to LAND1
+    IF p_cnt_eu EQ 'X'.
+      lv_cnt_selscreen = lc_land1_eu.
+    ENDIF.
+    IF p_cnt_ch EQ 'X'.
+      lv_cnt_selscreen = lc_land1_ch.
+    ENDIF.
+    IF p_cnt_no EQ 'X'.
+      lv_cnt_selscreen = lc_land1_no.
+    ENDIF.
+
+* Fetch relevant countries fror the radio button value
+    PERFORM prepare_relevant_countries
+                USING
+                   lv_cnt_selscreen
+                CHANGING
+                   lt_relevant_land1.
+
+* Check if there are any countries selected
+    IF lt_relevant_land1 IS INITIAL.
+* Log and skip processing if there are no countries selected
+
+      PERFORM add_log_message
+                USING ls_input_file_splitstr
+                      lc_msg_error
+                      'No countries could be determiened. Input file not processed.'.
+
+* delete input file, so no entires will be processed
+      CLEAR lt_input_file_splitstr.
+
+    ELSE.
+* If there are some countries selected the log all countries for
+* information purposes
+      LOOP AT lt_relevant_land1 INTO ls_relevant_land1.
+        CLEAR ls_logmessage.
+* if tabix does not fit into c3 then it will be truncated, acceptable (not dump)
+        lv_tabixc3 = sy-tabix.
+        CONCATENATE 'Country deteremined: #' lv_tabixc3 ' "' ls_relevant_land1-land1 '"'  INTO ls_logmessage.
+        PERFORM add_log_message
+                  USING ls_input_file_splitstr
+                        lc_msg_success
+                        ls_logmessage.
+      ENDLOOP.
+    ENDIF.
+
+* reset line counter for logging
+    lv_input_file_line_counter = 0.
+
+* reading the input file is completed, start processing the entries
+    LOOP AT lt_input_file_splitstr INTO ls_input_file_splitstr.
+* ===================================================== BEGIN MAIN PROCESSING LOOP
+
+* preparation at every loop iteration
+
+      lv_input_file_line_counter = lv_input_file_line_counter + 1.
+
+      CLEAR ls_input_file_t604.
+      CLEAR ls_input_file_t604t.
+
+* start with some generic control steps and checks on the current entry
+
+* try to convert language, and check if the language is a valid one
+      PERFORM check_iso_language_code
+                  USING   ls_input_file_splitstr-str1_language
+                  CHANGING  ls_input_file_t604t-spras
+                         lv_returncode.
+      IF lv_returncode <> 0.
+        PERFORM add_log_message
+                   USING ls_input_file_splitstr
+                         lc_msg_error
+                         'Language key in input file is not a valid Language ISO code in SAP (T002-LAISO)'.
+        CONTINUE.
+      ENDIF.
+
+* try to convert country, and check if that is a valid country
+* important for CH and NO, for EU it does not really matter since EU is
+* exploded to different country codes anyway
+      PERFORM check_coutnry_code
+                  USING
+                     ls_input_file_splitstr-str2_country
+                  CHANGING
+                     ls_input_file_t604-land1
+                     lv_returncode.
+      IF lv_returncode <> 0.
+        PERFORM add_log_message
+                   USING ls_input_file_splitstr
+                         lc_msg_error
+                         'Country in input file is not a valid Country in SAP (T005-LAND1)'.
+        CONTINUE.
+      ENDIF.
+*      ls_input_file_t604t-land1 = ls_input_file_t604-land1.
+
+* check if the language in the input file is the same as the one which is selected
+* on the slection screen. some processing modes might not use the language as a key
+* at all, so for those processing modes the language check would not be needed, still
+* it is required to process only those entries which belong to the selected language
+* even if the language is not important for the processing mode.
+
+* check allowed languages
+      IF ls_input_file_t604t-spras NE p_langu.
+        CONCATENATE 'Not processed. Entry has a different LANGUAGE than the one is selected on the selection screen (' p_langu ')' INTO ls_logmessage.
+        PERFORM add_log_message
+                   USING ls_input_file_splitstr
+                         lc_msg_warning
+                         ls_logmessage.
+        CONTINUE.
+      ENDIF.
+
+* check if the Country in the input file is one of the determined countries
+* selected and detemined from the selection screen
+* either CH, NO or EU (but not the detailed counters derived from EU,
+* because in the input file stays EU anyway)
+      IF ( ls_input_file_t604-land1 <> lv_cnt_selscreen ).
+        CONCATENATE 'Not processed. Entry has a different COUNTRY than the one is selected on the selection screen (' lv_cnt_selscreen ')' INTO ls_logmessage.
+        PERFORM add_log_message
+                   USING ls_input_file_splitstr
+                         lc_msg_warning
+                         ls_logmessage.
+        CONTINUE.
+      ENDIF.
+
+* check Import Code, if present and if it length is acceptable
+      PERFORM check_stawn
+                USING
+                   ls_input_file_splitstr-str3_impcode
+                CHANGING
+                   ls_input_file_t604-stawn
+                   lv_returncode.
+      IF lv_returncode <> 0.
+        PERFORM add_log_message
+                  USING ls_input_file_splitstr
+                        lc_msg_error
+                        'Import Code lenght is invalid.'.
+        CONTINUE.
+      ENDIF.
+      ls_input_file_t604t-stawn = ls_input_file_t604-stawn.
+
+
+* start real processing, depending on processing mode set on the selection screen
+
+* ===================================================== PROCESSING MODE: CREATE NEW
+* processing mode: create new entries
+      IF p_modnew EQ 'X'.
+
+        lv_rollback_needed = ' '.
+        lv_db_update_started = ' '.
+
+        LOOP AT lt_relevant_land1 INTO ls_relevant_land1.
+
+          ls_input_file_t604t-land1 = ls_relevant_land1-land1.
+          ls_input_file_t604-land1 = ls_relevant_land1-land1.
+
+* Check if Country and Import Code key combination exits in T604
+          SELECT SINGLE * FROM t604 INTO ls_sapdb_t604
+            WHERE land1 = ls_input_file_t604-land1 AND
+            stawn = ls_input_file_t604-stawn.
+
+          IF sy-subrc = 0.
+* There is already an entry available in T604 for the Country and Import Code from the input file
+            CONCATENATE 'Not processed. Not a new entry, there is already an entry in T604 with the same Country (' ls_input_file_t604-land1 ') and Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_warning
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* There is NO entry available in T604 for the Country and Import Code from the input file
+
+* Check if UOM is a valid one
+          PERFORM check_uom
+                      USING
+                         ls_input_file_splitstr-str5_uom
+                      CHANGING
+                         ls_input_file_t604-bemeh
+                         lv_returncode.
+          IF lv_returncode <> 0.
+* UOM is invalid in SAP
+            CONCATENATE 'Unit of measure "' ls_input_file_splitstr-str5_uom '" is invalid in SAP (T006-MSEHI). Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+*MOD-001 BEGIN --->
+* check second_uom, if present and if it length is acceptable
+
+* Check if Second UOM is a valid one
+          PERFORM check_second_uom
+                      USING
+                         ls_input_file_splitstr-str7_unused_second_uom
+                      CHANGING
+                         ls_input_file_t604-impma
+                         lv_returncode.
+          IF lv_returncode <> 0.
+* Second UOM is invalid in SAP
+            CONCATENATE 'Second Unit of measure "' ls_input_file_splitstr-str7_unused_second_uom
+                        '" is invalid in SAP (T006-MSEHI). Country (' ls_input_file_t604-land1
+                        ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+*MOD-001 END <---
+
+* If we are still here then...
+* UOM is valid, can continue with the DB update
+
+* Skip DB update if in test mode
+          IF p_test = 'X'.
+            CONCATENATE 'Test passed. Could be created. No DB update, running in Test Mode. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_success
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* mark that we reached the point where the DB updates begun, rollback/commit might be necesseary
+          lv_db_update_started = 'X'.
+
+* If we are still here then...
+* Insert into T604
+          INSERT t604 FROM ls_input_file_t604.
+
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt <> 1 ).
+* Inserting into T604 went wrong, error message
+            CONCATENATE 'DB update (T604) failed. Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* even though it is just the update of the first DB table
+* in previous loop iteration there could be other level1 and level2
+* successful DB updates which shall be rolled back now together in a
+* group
+            lv_rollback_needed = 'X'.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* Insert into T604 was OK
+
+* Prepare for Text Update, split description
+          PERFORM split_description
+        USING
+           ls_input_file_splitstr-str4_description
+        CHANGING
+           ls_input_file_t604t.
+
+* Insert into T604T
+          INSERT t604t FROM ls_input_file_t604t.
+
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt <> 1 ).
+* Inserting into T604T went wrong + ROLLBACK
+            CONCATENATE 'DB update (T604T) failed. Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* jist set the flag instead of a hard ROLLBACK here
+            lv_rollback_needed = 'X'.
+          ELSE.
+* Insert into T604T was OK + COMMIT
+            CONCATENATE 'DB entries created (T604, T604T), can be Committed. Country (' ls_relevant_land1-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_success
+                              ls_logmessage.
+* there would be a COMMIT here, but
+* wait with that till all countries are processed
+* and wait with the COMMIT till the end of the loop
+* to see if the rollback needed flag is set.
+          ENDIF.
+
+        ENDLOOP.
+
+* do commit or rollback, depending on if rollback is needed
+        PERFORM perform_commit_or_rollback
+                    USING ls_input_file_splitstr
+                          lv_rollback_needed
+                          lv_db_update_started.
+
+      ENDIF.
+
+* ===================================================== PROCESSING MODE: CHANGE TEXTS
+* processing mode: change text of existing entries
+      IF p_modcht EQ 'X'.
+
+        lv_rollback_needed = ' '.
+        lv_db_update_started = ' '.
+
+        LOOP AT lt_relevant_land1 INTO ls_relevant_land1.
+
+          ls_input_file_t604t-land1 = ls_relevant_land1-land1.
+          ls_input_file_t604-land1 = ls_relevant_land1-land1.
+
+* Check if Country and Import Code key combination exits in T604
+          SELECT SINGLE * FROM t604 INTO ls_sapdb_t604
+            WHERE land1 = ls_input_file_t604-land1 AND
+            stawn = ls_input_file_t604-stawn.
+          IF sy-subrc <> 0.
+* There is NO entry available in T604 for the Country and Import Code from the input file
+            CONCATENATE 'Text not changed. Import Code is missing (T604), shall be created first for Country (' ls_relevant_land1-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_warning
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* There is already an entry available in T604 for the Country and Import Code from the input file
+* Start creating (new texts) or changing (existing) texts
+
+* Prepare for Text Update, split description
+          PERFORM split_description
+        USING
+           ls_input_file_splitstr-str4_description
+        CHANGING
+           ls_input_file_t604t.
+
+* Skip DB update if in test mode
+          IF p_test = 'X'.
+            CONCATENATE 'Test passed. Text could be changed. No DB update, running in Test Mode. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_success
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* mark that we reached the point where the DB updates begun, rollback/commit might be necesseary
+          lv_db_update_started = 'X'.
+
+* If we are still here then...
+* Modify T604T
+          MODIFY t604t FROM ls_input_file_t604t.
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt <> 1 ).
+* Modify T604T went wrong + ROLLBACK
+            CONCATENATE 'DB update (T604T) failed, Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* even though it is just the update of a single DB table
+* in previous loop iteration there could be other text table
+* successful DB updates which shall be rolled back now together in a
+* group
+            lv_rollback_needed = 'X'.
+          ELSE.
+* Modify T604T was OK + COMMIT
+            CONCATENATE 'Text created / changed (T604T), can be Committed. Country (' ls_relevant_land1-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_success
+                              ls_logmessage.
+* there would be a COMMIT here, but
+* wait with that till all countries are processed
+* and wait with the COMMIT till the end of the loop
+* to see if the rollback needed flag is set.
+          ENDIF.
+
+        ENDLOOP.
+
+* do commit or rollback, depending on if rollback is needed
+        PERFORM perform_commit_or_rollback
+                    USING ls_input_file_splitstr
+                          lv_rollback_needed
+                          lv_db_update_started.
+
+      ENDIF.
+
+* ===================================================== PROCESSING MODE: CHANGE UOM
+* processing mode: change UOM of existin entries
+      IF p_modchu  EQ 'X'.
+
+        lv_rollback_needed = ' '.
+        lv_db_update_started = ' '.
+
+        LOOP AT lt_relevant_land1 INTO ls_relevant_land1.
+
+          ls_input_file_t604t-land1 = ls_relevant_land1-land1.
+          ls_input_file_t604-land1 = ls_relevant_land1-land1.
+
+* Check if Country and Import Code key combination exits in T604
+          SELECT SINGLE * FROM t604 INTO ls_sapdb_t604
+            WHERE land1 = ls_input_file_t604-land1 AND
+            stawn = ls_input_file_t604-stawn.
+          IF sy-subrc <> 0.
+* There is NO entry available in T604 for the Country and Import Code from the input file
+            CONCATENATE 'Not processed. There is nothing to change. No entry in T604 for the selected Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_warning
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+
+          ENDIF.
+
+* If we are still here then...
+* There is already an entry available in T604 for the Country and Import Code from the input file
+
+* Check if UOM is a valid one
+          PERFORM check_uom
+                      USING
+                         ls_input_file_splitstr-str5_uom
+                      CHANGING
+                         ls_input_file_t604-bemeh
+                         lv_returncode.
+          IF lv_returncode <> 0.
+* UOM is invalid in SAP
+            CONCATENATE 'Unit of measure "' ls_input_file_splitstr-str5_uom '" is invalid in SAP (T006-MSEHI). Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* UOM is valid, can continue
+
+*MOD-001 BEGIN --->
+* check second_uom, if present and if it length is acceptable
+
+* Check if Second UOM is a valid one
+          PERFORM check_second_uom
+                      USING
+                         ls_input_file_splitstr-str7_unused_second_uom
+                      CHANGING
+                         ls_input_file_t604-impma
+                         lv_returncode.
+          IF lv_returncode <> 0.
+* Second UOM is invalid in SAP
+            CONCATENATE 'Second Unit of measure "' ls_input_file_splitstr-str7_unused_second_uom
+                        '" is invalid in SAP (T006-MSEHI). Country (' ls_input_file_t604-land1
+                        ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+*MOD-001 END <---
+
+* Check if the Import Code is used by any materials in MARC-STAWN
+
+          CLEAR lt_marc.
+* Extended check disabled: no index used in large table MARC
+* Can take the performance risk, report is used only a few times a year
+* and no need to define an own index for STAWN
+          SELECT matnr werks FROM marc INTO TABLE lt_marc "#EC CI_NOFIELD
+            WHERE stawn = ls_input_file_t604-stawn.
+
+          IF sy-subrc = 0.
+* Some materials found in MARC which are using this Import Code
+* Import Code is in use,
+* Check all the materials one by one, and check if the new UOM
+* is allowed for all the materials
+
+            lv_matnr_uom_allowed_check_ok = 'X'. "if any of the material fail the check, then this flag goes FALSE
+
+            LOOP AT lt_marc ASSIGNING <ls_marc>.
+
+              SELECT SINGLE * FROM marm INTO ls_marm WHERE matnr = <ls_marc>-matnr AND
+                                                           meinh = ls_input_file_t604-bemeh.
+* if the currently processed MATNR does not use the UOM, then
+* we found at least one material where the UOM is not allowed
+* do not leave the loop, protocol all materials to inform the user
+* but set the flag
+              IF sy-subrc <> 0.
+                lv_matnr_uom_allowed_check_ok = ''.
+
+                lv_uomstr = ls_input_file_t604-bemeh.
+                CONCATENATE 'UOM not updated, UOM "' lv_uomstr '" is not allowed (MARM) for material: ' <ls_marc>-matnr '. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+                PERFORM add_log_message
+                           USING ls_input_file_splitstr
+                                 lc_msg_error
+                                  ls_logmessage.
+              ENDIF.
+            ENDLOOP.
+* after all materials checked, check if there was at least one
+* where the check failed
+            IF lv_matnr_uom_allowed_check_ok = ''.
+* Skip further processing
+              CONTINUE.
+            ENDIF.
+          ENDIF.
+
+* If the Import Code is not in use by any of the materials OR
+* The new UOM is allowed for ALL materials which are using the Import Code
+* then the new UOM can be updated in T604
+
+* Skip DB update if in test mode
+          IF p_test = 'X'.
+            CONCATENATE 'Test passed. UOM and Second UOM could be changed. No DB update, running in Test Mode. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_success
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* mark that we reached the point where the DB updates begun, rollback/commit might be necesseary
+          lv_db_update_started = 'X'.
+
+* If we are still here then...
+* Update T604 with new UOM
+
+          MODIFY t604 FROM ls_input_file_t604.
+
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt <> 1 ).
+* Modify T604 went wrong
+            CONCATENATE 'DB update (T604) failed at UOM update, Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* even though it is just the update of a single DB table
+* in previous loop iteration there could be other successful UOM
+* updates which shall be rolled back now together in a
+* group
+            lv_rollback_needed = 'X'.
+          ELSE.
+* Modify T604 was OK + COMMIT
+            CONCATENATE 'UOM changed (T604T), can be Committed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_success
+                              ls_logmessage.
+* there would be a COMMIT here, but
+* wait with that till all countries are processed
+* and wait with the COMMIT till the end of the loop
+* to see if the rollback needed flag is set.
+          ENDIF.
+
+        ENDLOOP.
+
+* do commit or rollback, depending on if rollback is needed
+        PERFORM perform_commit_or_rollback
+                    USING ls_input_file_splitstr
+                          lv_rollback_needed
+                          lv_db_update_started.
+
+      ENDIF.
+
+* ===================================================== PROCESSING MODE: DELETE
+* processing mode: delete existing entries
+      IF p_moddel  EQ 'X'.
+
+        lv_rollback_needed = ' '.
+        lv_db_update_started = ' '.
+
+        LOOP AT lt_relevant_land1 INTO ls_relevant_land1.
+
+          ls_input_file_t604t-land1 = ls_relevant_land1-land1.
+          ls_input_file_t604-land1 = ls_relevant_land1-land1.
+
+* Check if Country and Import Code key combination exits in T604
+          SELECT SINGLE * FROM t604 INTO ls_sapdb_t604
+            WHERE land1 = ls_input_file_t604-land1 AND
+            stawn = ls_input_file_t604-stawn.
+          IF sy-subrc <> 0.
+* There is NO entry available in T604 for the Country and Import Code from the input file
+            CONCATENATE 'Entry does not exist in T604 with the given Country (' ls_input_file_t604-land1 ') and Import Code (' ls_input_file_t604-stawn '), this way it can not be deleted' INTO ls_logmessage.
+            PERFORM add_log_message
+                     USING ls_input_file_splitstr
+                           lc_msg_warning
+                           ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* There is already an entry available in T604 for the Country and Import Code from the input file
+
+* Check if there are materials in MARC-STAWN which are currently using this Import Code
+
+          CLEAR lt_marc.
+* Extended check disabled: no index used in large table MARC
+* Can take the performance risk, report is used only a few times a year
+* and no need to define an own index for STAWN
+          SELECT matnr werks FROM marc INTO TABLE lt_marc "#EC CI_NOFIELD
+            WHERE stawn = ls_input_file_t604-stawn.
+
+          IF sy-subrc = 0.
+* Some materials found in MARC which are using this Import Code
+* Import Code is in use, can not be deleted
+* Protocol all materials which are using this Import Code
+            LOOP AT lt_marc ASSIGNING <ls_marc>.
+              CONCATENATE 'Can not be deleted, Import Code is used in MARC Material/Plant: ' <ls_marc>-matnr '/' <ls_marc>-werks INTO ls_logmessage.
+              PERFORM add_log_message
+                          USING ls_input_file_splitstr
+                                lc_msg_error
+                                ls_logmessage.
+            ENDLOOP.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* There are no materials found in MARC which would be using this Import Code
+* Import Code is not used, can be deleted
+
+* Skip DB update if in test mode
+          IF p_test = 'X'.
+            CONCATENATE 'Test passed. Could be deleted. No DB update, running in Test Mode. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                       USING ls_input_file_splitstr
+                             lc_msg_success
+                             ls_logmessage.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* mark that we reached the point where the DB updates begun, rollback/commit might be necesseary
+          lv_db_update_started = 'X'.
+
+* If we are still here then...
+* Delete from T604
+          DELETE t604 FROM ls_input_file_t604.
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt <> 1 ).
+* Delete from T604 went wrong, error message
+            CONCATENATE 'DB delete (T604) failed. Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+* even though it is just the update of the first DB table
+* in previous loop iteration there could be other level1 and level2
+* successful DB updates which shall be rolled back now together in a
+* group
+            lv_rollback_needed = 'X'.
+* Skip further processing
+            CONTINUE.
+          ENDIF.
+
+* If we are still here then...
+* Delete from T604 was OK
+* Continue with Delete from T604T
+
+* Delete from T604T
+* Delete ALL languages from the DB table NO MATTER what language is picked on the Selection Screen
+* or coming from the input file. Discussed with Stefan Beck, point is, after entries are deleted from
+* T604, no entries should be left hanging in T604T without a corresponding entry in T604
+
+* Extended Check disabled: No first index field in WHERE contidion
+* First field would be the language, but since all languages shall be deleted
+* it is not specified in the WEHRE clausule
+          DELETE  FROM t604t WHERE land1 = ls_input_file_t604t-land1 AND "#EC CI_NOFIRST
+                                   stawn = ls_input_file_t604t-stawn.
+          IF ( sy-subrc <> 0 ) OR ( sy-dbcnt < 1 ).
+* Delete from T604T went wrong, error message
+            CONCATENATE 'DB delete (T604) failed. Rollback needed. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_error
+                              ls_logmessage.
+
+            lv_rollback_needed = 'X'.
+          ELSE.
+* Delete from T604T is OK, success message + COMMIT
+            CONCATENATE 'DB enties deleted (T604) as well all texts in all languages (T604T), can be Commited. Country (' ls_input_file_t604-land1 ') Import Code (' ls_input_file_t604-stawn ')' INTO ls_logmessage.
+            PERFORM add_log_message
+                        USING ls_input_file_splitstr
+                              lc_msg_success
+                              ls_logmessage.
+* there would be a COMMIT here, but
+* wait with that till all countries are processed
+* and wait with the COMMIT till the end of the loop
+* to see if the rollback needed flag is set.
+          ENDIF.
+        ENDLOOP.
+
+* do commit or rollback, depending on if rollback is needed
+        PERFORM perform_commit_or_rollback
+                    USING ls_input_file_splitstr
+                          lv_rollback_needed
+                          lv_db_update_started.
+
+      ENDIF.
+
+* ===================================================== END MAIN PROCESSING LOOP
+    ENDLOOP.
+
+  ENDIF.
+
+* display processing log at the end
+  PERFORM write_log_onto_screen.
+
+*** The End ***
+
+
+
+*&---------------------------------------------------------------------*
+* FORM
+* Load the input text file as raw string table
+*&---------------------------------------------------------------------*
+FORM load_input_file_raw
+    USING     iv_filename     TYPE localfile
+              iv_fileformat   TYPE fileformat
+    CHANGING  et_filecontent  TYPE tt_input_file_splitstr
+              ev_returncode   TYPE i.
+
+  CLEAR ev_returncode.
+  ev_returncode = 0.
+
+* convert file name from chat 128 to string
+  DATA lv_filename TYPE string.
+  lv_filename = iv_filename.
+
+* convert form char3 to char10
+  DATA lv_filetype TYPE char10.
+  lv_filetype = iv_fileformat.
+
+  CALL METHOD cl_gui_frontend_services=>gui_upload
+    EXPORTING
+      filename                = lv_filename
+      has_field_separator     = 'X'
+      filetype                = lv_filetype
+    CHANGING
+*     data_tab                = et_filecontent
+      data_tab                = et_filecontent
+    EXCEPTIONS
+      file_open_error         = 1
+      file_read_error         = 2
+      no_batch                = 3
+      gui_refuse_filetransfer = 4
+      invalid_type            = 5
+      no_authority            = 6
+      unknown_error           = 7
+      bad_data_format         = 8
+      header_not_allowed      = 9
+      separator_not_allowed   = 10
+      header_too_long         = 11
+      unknown_dp_error        = 12
+      access_denied           = 13
+      dp_out_of_memory        = 14
+      disk_full               = 15
+      dp_timeout              = 16
+      not_supported_by_gui    = 17
+      error_no_gui            = 18
+      OTHERS                  = 19.
+
+  IF sy-subrc <> 0.
+    ev_returncode = sy-subrc.
+  ENDIF.
+
+ENDFORM.                    "load_input_file_raw
+
+*&---------------------------------------------------------------------*
+* FORM
+* Write log messages onto screen
+*&---------------------------------------------------------------------*
+FORM write_log_onto_screen.
+
+*
+*  WRITE: 'PROCESSING LOG DETAILS'.
+*  NEW-LINE.
+*  ULINE.
+*  NEW-LINE.
+*
+*  LOOP AT lt_output_logfile ASSIGNING <ls_output_logfile>.
+*    WRITE:  <ls_output_logfile>-str0_input_file_line_counter,
+*            <ls_output_logfile>-str1_language,
+*            <ls_output_logfile>-str2_country ,
+*            <ls_output_logfile>-str3_impcode,
+*            <ls_output_logfile>-str4_status,
+*            <ls_output_logfile>-str5_message.
+*    NEW-LINE.
+*  ENDLOOP.
+
+  DATA: gr_table TYPE REF TO cl_salv_table.
+  DATA: gr_functions TYPE REF TO cl_salv_functions.
+  DATA: gr_display TYPE REF TO cl_salv_display_settings.
+  DATA: gr_columns TYPE REF TO cl_salv_columns_table.
+  DATA: gr_column TYPE REF TO cl_salv_column_table.
+
+  TRY.
+
+      cl_salv_table=>factory( IMPORTING r_salv_table = gr_table
+      CHANGING t_table = lt_output_logfile ).
+
+      gr_functions = gr_table->get_functions( ).
+      gr_functions->set_all( abap_true ).
+
+      gr_display = gr_table->get_display_settings( ).
+      gr_display->set_striped_pattern( cl_salv_display_settings=>true ).
+      gr_display->set_list_header( 'Processing Log Details' ).
+
+      gr_columns = gr_table->get_columns( ).
+      gr_column ?= gr_columns->get_column( 'STR0_INPUT_FILE_LINE_COUNTER' ).
+      gr_column->set_long_text( 'Line' ).
+
+      gr_column ?= gr_columns->get_column( 'STR1_LANGUAGE' ).
+      gr_column->set_long_text( 'Language' ).
+
+      gr_column ?= gr_columns->get_column( 'STR2_COUNTRY' ).
+      gr_column->set_long_text( 'Country' ).
+
+      gr_column ?= gr_columns->get_column( 'STR3_IMPCODE' ).
+      gr_column->set_long_text( 'Import Code' ).
+
+      gr_column ?= gr_columns->get_column( 'STR4_STATUS' ).
+      gr_columns->set_exception_column( value = 'STR4_STATUS' ).
+      gr_column->set_short_text( 'Status' ).
+
+      gr_column ?= gr_columns->get_column( 'STR5_MESSAGE' ).
+      gr_column->set_long_text( 'Message' ).
+
+      gr_table->display( ).
+    CATCH cx_salv_msg.
+    CATCH cx_salv_not_found.
+    CATCH cx_salv_data_error.
+  ENDTRY.
+
+ENDFORM.                    "write_log_onto_screen
+
+*&---------------------------------------------------------------------*
+* FORM
+* Add a log message to the log table
+*&---------------------------------------------------------------------*
+FORM add_log_message
+    USING iv_input_file_entry TYPE ts_input_file_splitstr
+          iv_status           TYPE c
+          iv_message          TYPE char128.
+
+  DATA: ls_logentry TYPE ts_output_logfile.
+
+  CLEAR ls_logentry.
+
+  ls_logentry-str0_input_file_line_counter  = lv_input_file_line_counter.
+  ls_logentry-str1_language                 = iv_input_file_entry-str1_language.
+  ls_logentry-str2_country                  = iv_input_file_entry-str2_country.
+  ls_logentry-str3_impcode                  = iv_input_file_entry-str3_impcode.
+  ls_logentry-str4_status                   = iv_status.
+  ls_logentry-str5_message                  = iv_message.
+
+  APPEND ls_logentry TO lt_output_logfile.
+
+ENDFORM.                    "add_log_message
+
+*&---------------------------------------------------------------------*
+* FORM
+* Evaluate the flag which shows if at least once DB udpate failed
+* and then either perform a rollback / commint and ad log messages
+* Scenarios:
+*    1) If in test mode: no need for commit/rollback
+*    2) If NOT in test mode, but the first generic checks failed
+*       before any DB updates: no need for commit/rollback
+*    3) If NOT in test mode, first check are successful, but at least one
+*       DB update is failed: need for commit/rollback --> ROLLBACK
+*    4) If NOT in test mode, first check are successful, and ALL
+*       DB update are OK: need for commit/rollback --> COMMIT
+*&---------------------------------------------------------------------*
+FORM perform_commit_or_rollback
+    USING iv_input_file_entry TYPE ts_input_file_splitstr
+          iv_rollback_needed  TYPE boolean
+          iv_db_update_started TYPE boolean.
+
+  DATA ls_logmessage TYPE char128.
+
+* no need for commit/rollback if in test mode
+  IF p_test = 'X'.
+    RETURN.
+  ENDIF.
+
+* perform commit and rollback only if processing reached the
+* point where db updates are executed.
+  IF iv_db_update_started = ' '.
+    RETURN.
+  ENDIF.
+
+* check if any of the DB updates failed in the country processing
+  IF iv_rollback_needed EQ 'X'.
+* some DB updates failed, need to rollback everything
+    ls_logmessage = 'DB update(s) failed. All DB updates revoked Rollback'.
+    PERFORM add_log_message
+                USING iv_input_file_entry
+                      lc_msg_error
+                      ls_logmessage.
+    ROLLBACK WORK.
+  ELSE.
+* all DB updates were successful, can be committed
+    ls_logmessage = 'DB update(s) successful. DB Commit.'.
+    PERFORM add_log_message
+                USING iv_input_file_entry
+                      lc_msg_success
+                      ls_logmessage.
+    COMMIT WORK.
+  ENDIF.
+
+ENDFORM.                    "perform_commit_or_rollback
+
+*&---------------------------------------------------------------------*
+* FORM
+* Check the incoming language code from the input file
+* where the language code is supposed to be the ISO Lang code in T002
+* If it is anything else, then the language code is not a valid code
+* in SAP. If it is valid language code the reutrn the internal
+* language key (SPRAS) so it can be used later on in the processing.
+*&---------------------------------------------------------------------*
+FORM check_iso_language_code
+    USING     iv_laiso      TYPE char128
+    CHANGING  ev_spras      TYPE spras
+              ev_returncode TYPE i.
+
+  ev_returncode = 0.
+
+  DATA lv_spras TYPE spras.
+  CLEAR lv_spras.
+  CLEAR ev_spras.
+
+  DATA len TYPE i.
+
+* Check length of the incoming char field. The internal type of the field has a limited
+* length, but the field in the inpuut file can be a longer char string. If the external
+* field would be converted implicitly to the internal type, or even if the external
+* field would be used directly in the SELECT, then the first few characters of the
+* external field would be used (truncated). After such a conversion, an incorrect
+* external value might still be converted to a seemingly valid internal value.
+* Need to avoid such situations and need to enforce correct data even in the iput file.
+* Example:
+* - Input file: ENG which is NOT a valid language ISO code,
+* - after the conversion to 2 char long, it would be EN which is now a valid code
+* - the SELECT would be successful
+* - but the external value ENG is still an invalid one, shall be EN even in the input file.
+  len =  strlen( iv_laiso ).
+  IF ( len > 2 ) OR ( len = 0 ).
+    ev_returncode = 1.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE spras FROM t002 INTO lv_spras WHERE laiso = iv_laiso.
+
+  IF sy-subrc = 0.
+    ev_spras = lv_spras.
+  ELSE.
+    ev_returncode = 1. " Language Key could not be found for ISO code
+  ENDIF.
+
+ENDFORM.                    "check_iso_language_code
+
+*&---------------------------------------------------------------------*
+* FORM
+* Check the incoming country code from the input file
+* where the coutry is supposed to be a country available in T005-LAND1
+* (it is not the ISO code of the country! The ISO code is in T005-INTCA
+* but that is "in most cases" the same as T005-LAND1)
+*&---------------------------------------------------------------------*
+FORM check_coutnry_code
+    USING    iv_country    TYPE char128
+    CHANGING ev_land1      TYPE land1
+             ev_returncode TYPE i.
+
+  ev_returncode = 0.
+
+  DATA  lv_land1 TYPE land1.
+  CLEAR lv_land1.
+  CLEAR ev_land1.
+
+  DATA len TYPE i.
+
+* check length of input fileld (shall be the match the internal type)
+  len =  strlen( iv_country ).
+  IF ( len > 3 ) OR ( len = 0 ).
+    ev_returncode = 1.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE land1 FROM t005 INTO lv_land1 WHERE land1 = iv_country.
+
+  IF sy-subrc = 0.
+    ev_land1 = lv_land1.
+  ELSE.
+    ev_returncode = 1. " Country could not be found in T005
+  ENDIF.
+
+ENDFORM.                    "check_iso_language_code
+
+*&---------------------------------------------------------------------*
+* FORM
+* Collect the relecant countries into a country table for latter
+* processing. For CH and NO do not do anything special, there is a 1 to 1
+* mapping. For EU need to ferch all EU countries via the sales orgs
+* defined in DB TVKO and the assigned countries (but remove Norway)
+* !!! ATTENTION !!!
+* Hard limitaiton: the entire logic is based on the assumtion that
+* TVKO contains only EU sales organizations. In fact currenlty via TVKO
+* we cannot fetch all EU countries, since Distrelec does not have a sales
+* organization definied for all EU countries (Stefan Beck: acceptable
+* limitation, since introducing new countries, sales org would require
+* also migrating all materials under the new country code) and
+* it might happen in the future that TVKO is going to contain other
+* sales orgs, in other countries which are not in the EU.
+*&---------------------------------------------------------------------*
+FORM prepare_relevant_countries
+    USING    iv_country    TYPE land1
+    CHANGING et_land1      TYPE tt_land1.
+
+  DATA: lv_land1 TYPE land1.
+  DATA: ls_land1 TYPE ts_land1.
+  DATA: lt_tvko  TYPE TABLE OF tvko.
+  DATA: ls_tvko  TYPE tvko.
+  DATA: lt_adrc  TYPE TABLE OF adrc.
+  DATA: ls_adrc  TYPE adrc.
+
+
+  CLEAR et_land1.
+
+* check incoming country
+  CASE iv_country.
+    WHEN lc_land1_ch.
+* do nothing special for Switzerland, add only CH
+      APPEND iv_country TO et_land1.
+    WHEN lc_land1_no.
+* do nothing special for Norway, add only NO
+      APPEND iv_country TO et_land1.
+    WHEN lc_land1_eu .
+* for EU, need to fetch all relevant EU countries
+* via TVKO and ADRC
+
+* get all sales orgs
+      SELECT * FROM tvko INTO TABLE lt_tvko.
+
+      IF sy-subrc <> 0.
+* in case of problems return and empty land collection
+        RETURN.
+      ENDIF.
+
+      LOOP AT lt_tvko INTO ls_tvko.
+* need to get all addresses, since adrc entries are
+* time dependent, need to fetch the latest address
+        SELECT * FROM adrc INTO TABLE lt_adrc WHERE addrnumber = ls_tvko-adrnr.
+
+        IF ( sy-subrc <> 0 ) AND ( sy-dbcnt > 0 ).
+* in case of problems continue with the next address
+          CONTINUE.
+        ENDIF.
+
+* make sure the firs one is the lates one
+        SORT lt_adrc BY addrnumber DESCENDING.
+        CLEAR ls_adrc.
+        READ TABLE lt_adrc INTO ls_adrc INDEX 1.
+
+* do not need to collect countries if it is empty, NO, or CH
+        IF ( ls_adrc-country IS INITIAL ) OR
+          ( ls_adrc-country EQ lc_land1_ch ) OR
+          ( ls_adrc-country EQ lc_land1_no ).
+          CONTINUE.
+        ENDIF.
+
+        ls_land1-land1 = ls_adrc-country.
+* add country to the collection
+        APPEND ls_land1 TO et_land1.
+      ENDLOOP.
+* remove duplicates
+      SORT et_land1 BY land1.
+      DELETE ADJACENT DUPLICATES FROM et_land1.
+
+    WHEN OTHERS.
+* country is unexpected, do noting, return empy table
+      RETURN.
+  ENDCASE.
+
+ENDFORM.                    "check_iso_language_code
+
+
+*&---------------------------------------------------------------------*
+* FORM
+* Check the incoming Import Code from the input file
+* Just check the length of the IC, no DB comparison needed
+*&---------------------------------------------------------------------*
+FORM check_stawn
+    USING    iv_impcode    TYPE char128
+    CHANGING ev_stawn      TYPE stawn
+             ev_returncode TYPE i.
+
+  ev_returncode = 0.
+
+  DATA  lv_stawn TYPE stawn.
+  CLEAR lv_stawn.
+  CLEAR ev_stawn.
+
+  DATA len TYPE i.
+
+* check length of input fileld (shall be the match the internal type)
+  len =  strlen( iv_impcode ).
+  IF ( len > 17 ) OR ( len = 0 ).
+    ev_returncode = 1.
+    RETURN.
+  ENDIF.
+
+* conversion, can be enhanced if needed
+
+  ev_stawn = iv_impcode.
+
+ENDFORM.                    "check_iso_language_code
+
+*&---------------------------------------------------------------------*
+* FORM
+* Check the incoming unit of measure from the input file
+* where the UOM is supposed to be a UOM available in T006-MSEHI
+* (it is not the ISO code of the UOM! The ISO code is in T006-ISOCODE,
+* but it was decided to use MSEHI instread of ISOCODE, MSEH3, MSEH6, MSEHT)
+*&---------------------------------------------------------------------*
+FORM check_uom
+    USING    iv_uom    TYPE char128
+    CHANGING ev_msehi      TYPE msehi
+             ev_returncode TYPE i.
+
+  ev_returncode = 0.
+
+  DATA  lv_msehi TYPE msehi.
+  CLEAR lv_msehi.
+  CLEAR ev_msehi.
+
+  DATA len TYPE i.
+
+* check length of input fileld (shall be the match the internal type)
+  len =  strlen( iv_uom ).
+  IF ( len > 3 ) OR ( len = 0 ).
+    ev_returncode = 1.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE msehi FROM t006 INTO lv_msehi WHERE msehi = iv_uom.
+
+  IF sy-subrc = 0.
+    ev_msehi = lv_msehi.
+  ELSE.
+    ev_returncode = 1. " UOM could not be found in T006
+  ENDIF.
+
+ENDFORM.                    "check_iso_language_code
+
+*&---------------------------------------------------------------------*
+*&      Form  check_second_uom
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM check_second_uom
+      USING    iv_uom    TYPE char128
+    CHANGING ev_msehi      TYPE msehi
+             ev_returncode TYPE i.
+
+  ev_returncode = 0.
+
+  DATA  lv_msehi TYPE msehi.
+  CLEAR lv_msehi.
+  CLEAR ev_msehi.
+
+  DATA len TYPE i.
+
+* check length of input fileld (shall be the match the internal type)
+  len =  strlen( iv_uom ).
+  IF ( len > 3 ) OR ( len = 0 ).
+    ev_returncode = 1.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE msehi FROM t006 INTO lv_msehi WHERE msehi = iv_uom.
+
+  IF sy-subrc = 0.
+    ev_msehi = lv_msehi.
+  ELSE.
+    ev_returncode = 1. " UOM could not be found in T006
+  ENDIF.
+
+ENDFORM .                    "check_second_uom
+*&---------------------------------------------------------------------*
+* FORM
+* Description from the input file is a long string, but in DB table
+* T604T there are 7 fields, each 40 char long, total 280 char long.
+* If the description from the input file is longer than 280 char then
+* only the LAST 280 characters shall be moved to T604T, and even that
+* shall be split up into chunks of 40 characters.
+*&---------------------------------------------------------------------*
+FORM split_description
+    USING    iv_description TYPE string
+    CHANGING es_t604t      TYPE t604t.
+
+  DATA: lv_description_length TYPE i.
+  DATA: lv_max280str_length TYPE i.
+  DATA: lv_max280str TYPE string.
+
+  DATA: lv_t604t_txtfiledcounter TYPE i.
+  DATA: lv_t604t_txtfiledcounterstr TYPE c.
+  DATA: lv_t604t_txtfiledname TYPE text40.
+  FIELD-SYMBOLS: <lv_t604t_txtfiledpoi> TYPE text40.
+  DATA: lv_t604t_offset TYPE i.
+  DATA: lv_t604t_len TYPE i.
+
+* init
+  CLEAR es_t604t-text1.
+  CLEAR es_t604t-text2.
+  CLEAR es_t604t-text3.
+  CLEAR es_t604t-text4.
+  CLEAR es_t604t-text5.
+  CLEAR es_t604t-text6.
+  CLEAR es_t604t-text7.
+
+* get string lenghts
+  lv_description_length = strlen( iv_description ).
+  lv_max280str_length =  lv_description_length.
+  lv_max280str = iv_description.
+
+* if the decsription is longer than 280 then take the last 280 characters
+* of the description and set the lenght to 280
+* adjustments and get last
+  IF lv_max280str_length > 280.
+    lv_max280str_length = 280.
+    lv_max280str = substring( val = iv_description off = ( lv_description_length - lv_max280str_length ) len = 280 ).
+  ENDIF.
+
+* start splitting the string into 40 long chars
+* and put these chunchks into the corresponding fields
+* of es_t604t
+
+  lv_t604t_txtfiledcounter = 1.
+  lv_t604t_offset = 0.
+
+  DO.
+* the string field is 1 char long, fine for numbers less than 10
+* which is OK for field names TEXT1 ... TEXT7
+    lv_t604t_txtfiledcounterstr = lv_t604t_txtfiledcounter.
+
+* dinalmically assign the next text field
+    CONCATENATE 'es_t604t-text' lv_t604t_txtfiledcounterstr INTO lv_t604t_txtfiledname.
+    ASSIGN (lv_t604t_txtfiledname) TO <lv_t604t_txtfiledpoi>.
+
+* set lenght of the next chunk
+    lv_t604t_len = 40.
+    IF  ( ( lv_t604t_offset + 40 ) > lv_max280str_length ).
+      lv_t604t_len = lv_max280str_length -  lv_t604t_offset.
+    ENDIF.
+
+* get the next 40 chunk
+    <lv_t604t_txtfiledpoi> = substring( val = lv_max280str off = lv_t604t_offset len = lv_t604t_len ).
+
+* increase offset, check if still some characters left
+    lv_t604t_txtfiledcounter =   lv_t604t_txtfiledcounter + 1.
+    lv_t604t_offset = lv_t604t_offset + 40.
+
+    IF lv_t604t_offset >= lv_max280str_length.
+      EXIT.
+    ENDIF.
+
+* safe exit criteria to avoid accidental endless loops
+    IF lv_t604t_txtfiledcounter > 7.
+      EXIT.
+    ENDIF.
+
+  ENDDO.
+
+ENDFORM.                    "split_description
