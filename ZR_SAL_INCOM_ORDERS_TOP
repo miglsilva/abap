@@ -1,0 +1,310 @@
+*&---------------------------------------------------------------------*
+*& Include ZR_SAL_INCOM_ORDERS_TOP                           Report ZR_SAL_INCOM_ORDERS
+*&
+*&---------------------------------------------------------------------*
+
+REPORT zr_sal_incom_orders.
+
+CONSTANTS: c_blocked_status TYPE j_status VALUE 'E0002',
+           c_sold_to_party TYPE parvw VALUE 'AG',
+           c_ship_to_party TYPE parvw VALUE 'WE' ,
+           c_chf           TYPE waers VALUE 'CHF' ,
+           c_rate_p        TYPE kurst_curr VALUE 'P' ,
+           c_fld_vbtyp     TYPE fdname VALUE 'VBTYP' ,
+           c_fld_file_a    TYPE fdname VALUE 'P_FILE_A' ,
+           c_fld_file_d    TYPE fdname VALUE 'P_FILE_D' .
+
+TABLES: vbak , mara , vbap , vbfa .
+
+TYPES: BEGIN OF struct_makt ,
+  matnr TYPE matnr ,
+  maktx TYPE maktx .
+TYPES: END OF struct_makt .
+
+TYPES: BEGIN OF struct_patners_functions ,
+    vbeln TYPE vbeln ,
+  kunnr TYPE kunnr ,
+  parvw TYPE parvw ,
+  name1 TYPE name1_gp .
+TYPES: END OF struct_patners_functions .
+
+TYPES: BEGIN OF struct_incomplete_log ,
+  vbeln TYPE vbeln ,
+  posnr TYPE posnr ,
+  etenr TYPE etenr .
+TYPES: END OF struct_incomplete_log .
+
+TYPES: BEGIN OF struct_jest,
+  objnr	TYPE j_objnr .
+TYPES: END OF struct_jest .
+
+TYPES: BEGIN OF struct_vbfa ,
+  vbelv TYPE vbeln_von ,
+  posnv TYPE posnr_von ,
+  vbeln TYPE vbeln_nach ,
+  posnn TYPE posnr_nach ,
+  vbtyp_n TYPE vbtyp_n ,
+  rfmng TYPE rfmng ,
+  meins TYPE meins ,
+  rfmng_flt TYPE rfmng_flt ,
+  vrkme TYPE vrkme ,
+  mjahr TYPE mjahr .
+TYPES: END OF struct_vbfa .
+
+TYPES: BEGIN OF struct_ekbe ,
+  ebeln	TYPE ebeln ,
+  ebelp	TYPE ebelp ,
+  menge	TYPE menge_d .
+TYPES: END OF struct_ekbe .
+
+TYPES: BEGIN OF struct_mkpf ,
+  mblnr TYPE mblnr ,
+  mjahr TYPE mjahr ,
+  le_vbeln TYPE vbeln_vl .
+TYPES: END OF struct_mkpf .
+
+TYPES: BEGIN OF struct_vbak ,
+    vbeln  TYPE vbeln_va,
+    erdat TYPE erdat ,
+    erzet TYPE erzet ,
+    ernam TYPE ernam ,
+    vbtyp TYPE vbtyp ,
+    auart TYPE auart ,
+    vkorg TYPE vkorg ,
+    vtweg TYPE vtweg ,
+    spart TYPE spart ,
+    waerk TYPE waerk ,
+    bstnk	TYPE bstnk ,
+    bsark TYPE bsark ,
+    lifsk TYPE lifsk ,
+    objnr TYPE objko .
+TYPES: END OF struct_vbak .
+
+TYPES: BEGIN OF struct_mara ,
+  matnr TYPE matnr ,
+  zzpim_relev TYPE zdgte_pim_relev ,
+  maktx TYPE maktx .
+TYPES: END OF struct_mara .
+
+TYPES: BEGIN OF struct_data ,
+    vbeln  TYPE vbeln_va,
+    erdat TYPE erdat ,
+    erzet TYPE erzet ,
+    ernam TYPE ernam ,
+    vbtyp TYPE vbtyp ,
+    auart TYPE auart ,
+    vkorg TYPE vkorg ,
+    vtweg TYPE vtweg ,
+    spart TYPE spart ,
+    waerk TYPE waerk ,
+    bstnk	TYPE bstnk ,
+    bsark TYPE bsark ,
+    lifsk TYPE lifsk ,
+    zzpim_relev TYPE zdgte_pim_relev ,
+    objnr TYPE objko ,
+    posnr	TYPE posnr_va ,
+    matnr	TYPE matnr ,
+    posar TYPE posar ,
+    pstyv TYPE pstyv ,
+    netwr	TYPE netwr_ap ,
+    netwr_chf	TYPE netwr_ap ,
+    waerk_chf TYPE waerk ,
+    kwmeng TYPE kwmeng ,
+    kmein TYPE kmein ,
+    werks TYPE werks_ext ,
+    vstel TYPE vstel ,
+    route TYPE route ,
+    cmgst TYPE cmgst ,
+    lfsta TYPE lfsta ,
+    absta TYPE absta ,
+    etenr	TYPE etenr ,
+    edatu TYPE edatu ,
+    wmeng TYPE wmeng ,
+    bmeng TYPE bmeng ,
+    lifsp TYPE lifsp .
+TYPES: END OF struct_data .
+
+TYPES: BEGIN OF struct_output ,
+    vbeln  TYPE vbeln_va,
+    erdat TYPE erdat ,
+    erzet TYPE erzet ,
+    ernam TYPE ernam ,
+    vbtyp TYPE vbtyp ,
+    auart TYPE auart ,
+    vkorg TYPE vkorg ,
+    vtweg TYPE vtweg ,
+    spart TYPE spart ,
+    bstnk	TYPE bstnk ,
+    bsark TYPE bsark ,
+    kunnr TYPE kunag ,
+    sold_name TYPE name1_gp ,
+    kunwe TYPE kunwe ,
+    ship_name TYPE name1_gp ,
+    pstyv TYPE pstyv ,
+    matnr	TYPE matnr ,
+    posnr TYPE posnr_va,
+    maktx TYPE maktx ,
+    netwr	TYPE netwr_ap ,
+    waerk TYPE waerk ,
+    netwr_chf	TYPE netwr_ap ,
+    waerk_chf TYPE waerk ,
+    kwmeng TYPE kwmeng ,
+    kmein TYPE kmein ,
+    werks TYPE werks_ext ,
+    vstel TYPE vstel ,
+    route TYPE route ,
+*    etenr  TYPE etenr ,
+*    edatu TYPE edatu ,
+*    wmeng TYPE wmeng ,
+*    bmeng TYPE bmeng ,
+*    Rejected / Cancelled Quantity
+    rcqty TYPE p LENGTH 13 DECIMALS 0, "wmeng  ,
+    rcnetwr	TYPE netwr_ap ,
+*    Delivery & Billed Quantity
+    dbqty TYPE p LENGTH 13 DECIMALS 0, "wmeng ,
+    dbnetwr	TYPE netwr_ap ,
+*    Delivery not Billed Quantity
+    dnbqty TYPE p LENGTH 13 DECIMALS 0, "wmeng ,
+    dnbnetwr  TYPE netwr_ap ,
+*    Forward Orders Quantity
+    foqty TYPE p LENGTH 13 DECIMALS 0, " wmeng ,
+    fonetwr	TYPE netwr_ap ,
+*    Incomplete Quantity
+    incqty TYPE p LENGTH 13 DECIMALS 0, " wmeng ,
+    incnetwr  TYPE netwr_ap ,
+*    Complete with Delivery Block Quantity
+    cdbqty TYPE p LENGTH 13 DECIMALS 0, " wmeng ,
+    cdbnetwr  TYPE netwr_ap ,
+*    Credit Block Quantity
+    cbqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    cbnetwr	TYPE netwr_ap ,
+*    Gross Margin Block. Quantity
+    gmqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    gmnetwr	TYPE netwr_ap ,
+*    Backorder (Drop Shipment) Quantity
+    bdsqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    bdsnetwr  TYPE netwr_ap ,
+*    Backorder (Other) Quantity
+    bcqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    bcnetwr	TYPE netwr_ap ,
+*    Category Plus Quantity
+    cpqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    cpnetwr	TYPE netwr_ap ,
+*    Buy to Order Quantity
+    btoqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    btonetwr  TYPE netwr_ap ,
+*    Customer Specific Stock Quantity
+    cstqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    cstnetwr  TYPE netwr_ap ,
+*Total Quantity
+    totalqty TYPE p LENGTH 13 DECIMALS 0, " wmeng
+    totalnetwr  TYPE netwr_ap .
+**    Partial Delivery / Rest Cancelled Quantity
+*    pdrcqty TYPE wmeng ,
+**    Partial Delivery / Rest Backorder Quantity
+*    pdrbqty TYPE wmeng ,
+**    Partial Delivery / Rest Forward Order Quantity
+*    pdrfqty TYPE wmeng .
+
+TYPES: END OF struct_output .
+
+TYPES: BEGIN OF struct_agg_vkorg_output ,
+      vkorg TYPE vkorg ,
+      rcqty TYPE p LENGTH 13 DECIMALS 0,
+      rcnetwr	TYPE netwr_ap ,
+      dbqty TYPE p LENGTH 13 DECIMALS 0,
+      dbnetwr	TYPE netwr_ap ,
+      dnbqty TYPE p LENGTH 13 DECIMALS 0,
+      dnbnetwr  TYPE netwr_ap ,
+      foqty TYPE p LENGTH 13 DECIMALS 0,
+      fonetwr	TYPE netwr_ap ,
+      incqty TYPE p LENGTH 13 DECIMALS 0,
+      incnetwr  TYPE netwr_ap ,
+      cdbqty TYPE p LENGTH 13 DECIMALS 0,
+      cdbnetwr  TYPE netwr_ap ,
+      cbqty TYPE p LENGTH 13 DECIMALS 0,
+      cbnetwr	TYPE netwr_ap ,
+      gmqty TYPE p LENGTH 13 DECIMALS 0,
+      gmnetwr	TYPE netwr_ap ,
+      bdsqty TYPE p LENGTH 13 DECIMALS 0,
+      bdsnetwr  TYPE netwr_ap ,
+      bcqty TYPE p LENGTH 13 DECIMALS 0,
+      bcnetwr	TYPE netwr_ap ,
+      cpqty TYPE p LENGTH 13 DECIMALS 0,
+      cpnetwr	TYPE netwr_ap ,
+      btoqty TYPE p LENGTH 13 DECIMALS 0,
+      btonetwr  TYPE netwr_ap ,
+      cstqty TYPE p LENGTH 13 DECIMALS 0,
+      cstnetwr  TYPE netwr_ap ,
+      totalqty TYPE p LENGTH 13 DECIMALS 0,
+      totalnetwr  TYPE netwr_ap .
+TYPES: END OF struct_agg_vkorg_output .
+
+CLASS lcl_application DEFINITION DEFERRED.
+
+DATA: lo_application TYPE REF TO lcl_application.
+
+SELECTION-SCREEN BEGIN OF BLOCK sel1 WITH FRAME TITLE text-s01.
+SELECT-OPTIONS: so_vbeln FOR vbak-vbeln .
+SELECT-OPTIONS: so_vkorg FOR vbak-vkorg .
+SELECT-OPTIONS: so_vtweg FOR vbak-vtweg .
+SELECT-OPTIONS: so_spart FOR vbak-spart .
+SELECT-OPTIONS: so_erdat FOR vbak-erdat .
+SELECT-OPTIONS: so_vbtyp FOR vbak-vbtyp .
+SELECT-OPTIONS: so_auart FOR vbak-auart .
+
+PARAMETERS p_prices TYPE abap_bool AS CHECKBOX DEFAULT 'X' .
+*SELECTION-SCREEN SKIP .
+SELECTION-SCREEN SKIP .
+SELECTION-SCREEN BEGIN OF BLOCK sel2 WITH FRAME TITLE text-s02.
+*Status Filters (Select Options)
+SELECT-OPTIONS: so_matc  FOR mara-zzpim_relev .
+SELECT-OPTIONS: so_drshp FOR vbap-pstyv .
+SELECT-OPTIONS: so_btoic FOR vbap-pstyv .
+*	customer specific stock item category (vbap-pstyv)
+SELECT-OPTIONS: so_cssic FOR vbap-pstyv .
+SELECT-OPTIONS: so_pstyv FOR vbap-pstyv NO-DISPLAY .
+SELECTION-SCREEN END OF BLOCK sel2 .
+SELECT-OPTIONS: sa_vbtyp FOR vbfa-vbtyp_n  NO-DISPLAY .
+PARAMETERS pa_psize TYPE i DEFAULT '5000' NO-DISPLAY .     "#EC STR_NUM
+SELECTION-SCREEN END OF BLOCK sel1 .
+SELECTION-SCREEN BEGIN OF BLOCK sel3 WITH FRAME TITLE text-s03.
+PARAMETERS: p_aspath  TYPE LOCALFILE OBLIGATORY .
+
+PARAMETER : p_optd RADIOBUTTON GROUP gr1,
+            p_opta RADIOBUTTON GROUP gr1,
+            p_optda RADIOBUTTON GROUP gr1 .
+*PARAMETERS p_avkorg TYPE abap_bool AS CHECKBOX .
+SELECTION-SCREEN END OF BLOCK sel3 .
+
+
+
+*AT SELECTION-SCREEN ON so_vkorg .
+*
+*  IF lines( so_vkorg ) NE 1 .
+*    MESSAGE w000(zdgt_bc) WITH text-001
+*                               text-002 .
+*  ENDIF .
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_aspath .
+  DATA lv_string TYPE string .
+
+* Application server F4 help
+* Function Module using for Application Server F4 Help
+  CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
+    EXPORTING
+      directory        = space
+      filemask         = space
+    IMPORTING
+      serverfile       = lv_string
+    EXCEPTIONS
+      canceled_by_user = 1
+      OTHERS           = 2.
+* Pass the file path to the path input field on the selection screen
+  IF sy-subrc IS INITIAL.
+    p_aspath =  lv_string.
+* SEARCH HELP FAILED,giving the error message
+  ELSE.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
