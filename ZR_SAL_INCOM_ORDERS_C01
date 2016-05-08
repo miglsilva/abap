@@ -1,0 +1,1317 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZR_SAL_INCOM_ORDERS_C01
+*&---------------------------------------------------------------------*
+CLASS lcl_application DEFINITION FINAL.
+  PUBLIC SECTION .
+    CLASS-METHODS:get_apps_instance
+                   RETURNING
+                   value(r_apps) TYPE REF TO lcl_application .
+    CLASS-METHODS set_values .
+    METHODS: " constructor ,
+             main .
+
+    DATA:       lo_alv TYPE REF TO cl_salv_table ,
+                lt_data_output  TYPE STANDARD TABLE OF zdgts_sal_incom_orders_output ,
+                lt_agg_output   TYPE STANDARD TABLE OF zdgts_sal_agg_vkorg_output  ,
+                lt_data         TYPE STANDARD TABLE OF struct_data  .
+
+
+
+  PRIVATE SECTION .
+    CLASS-DATA: lo_apps TYPE REF TO lcl_application.
+
+    DATA:   lt_makt         TYPE STANDARD TABLE OF struct_makt ,
+            lt_vbfa         TYPE STANDARD TABLE OF struct_vbfa ,
+            lt_jest         TYPE STANDARD TABLE OF struct_jest ,
+            lt_ekbe         TYPE STANDARD TABLE OF struct_ekbe ,
+            lt_mkpf         TYPE STANDARD TABLE OF struct_mkpf ,
+            lt_mara         TYPE STANDARD TABLE OF struct_mara ,
+            lt_partner_functions TYPE STANDARD TABLE OF struct_patners_functions ,
+            lt_incomplete_log TYPE STANDARD TABLE OF struct_incomplete_log.
+
+    METHODS: prepare_fieldcatalog,
+             display_alv,
+             get_data_from_db,
+             export_csv_file ,
+             agg_vkorg ,
+             get_qty ,
+             add_file_header IMPORTING i_struname TYPE tabname
+                                       i_delimiter TYPE c
+                             EXPORTING e_export_data TYPE LINE OF truxs_t_text_data
+                             RAISING zcx_core_exception.
+
+    METHODS: on_link_click
+        FOR EVENT link_click OF cl_salv_events_table
+          IMPORTING row column  .
+ENDCLASS .                    "lcl_application DEFINITION
+*----------------------------------------------------------------------*
+*       CLASS lcl_application IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS lcl_application IMPLEMENTATION .
+
+  METHOD get_apps_instance .
+
+*Design patternSingleton
+    IF lo_apps IS INITIAL.
+*     creation of the object
+      CREATE OBJECT lo_apps.
+      r_apps = lo_apps .
+    ENDIF.
+  ENDMETHOD .                    "get_apps_instance
+
+  METHOD set_values .
+
+    DATA: rng_cust TYPE STANDARD TABLE OF zdgts_cust_range ,
+          rng_cust_line TYPE zdgts_cust_range .
+
+    DATA lv_value TYPE zdgte_value .
+
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_date
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_erdat-sign = rng_cust_line-sign .
+      so_erdat-option = rng_cust_line-option .
+      so_erdat-low = sy-datum - rng_cust_line-low .
+      so_erdat-high = sy-datum  .
+      APPEND so_erdat TO so_erdat .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_mat_class
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_matc-sign = rng_cust_line-sign .
+      so_matc-option = rng_cust_line-option .
+      so_matc-low = rng_cust_line-low .
+      so_matc-high = rng_cust_line-high  .
+      APPEND so_matc TO so_matc .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_drop_shipment
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_drshp-sign = rng_cust_line-sign .
+      so_drshp-option = rng_cust_line-option .
+      so_drshp-low = rng_cust_line-low .
+      so_drshp-high = rng_cust_line-high  .
+      APPEND so_drshp TO so_drshp .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_sales_org
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_vkorg-sign = rng_cust_line-sign .
+      so_vkorg-option = rng_cust_line-option .
+      so_vkorg-low = rng_cust_line-low .
+      so_vkorg-high = rng_cust_line-high  .
+      APPEND so_vkorg TO so_vkorg .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_buy_to_order
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_btoic-sign = rng_cust_line-sign .
+      so_btoic-option = rng_cust_line-option .
+      so_btoic-low = rng_cust_line-low .
+      so_btoic-high = rng_cust_line-high  .
+      APPEND so_btoic TO so_btoic .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_cust_spec_stock
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_cssic-sign = rng_cust_line-sign .
+      so_cssic-option = rng_cust_line-option .
+      so_cssic-low = rng_cust_line-low .
+      so_cssic-high = rng_cust_line-high  .
+      APPEND so_cssic TO so_cssic .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = c_fld_vbtyp
+            iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        "Error reading program configuration.
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      so_vbtyp-sign = rng_cust_line-sign .
+      so_vbtyp-option = rng_cust_line-option .
+      so_vbtyp-low = rng_cust_line-low .
+      so_vbtyp-high = rng_cust_line-high  .
+      APPEND so_vbtyp TO so_vbtyp .
+    ENDLOOP .
+
+    CLEAR rng_cust[].
+    TRY.
+        zdgtcl_bc_const=>get_range_value(
+        EXPORTING
+           iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+           iv_fieldname = zdgtcl_bc_const=>mc_fld_doc_cat_sub
+                       iv_dbread   = abap_true
+           IMPORTING
+             et_value = rng_cust ).
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+
+    ENDTRY.
+
+    LOOP AT rng_cust INTO rng_cust_line .
+      sa_vbtyp-sign = rng_cust_line-sign .
+      sa_vbtyp-option = rng_cust_line-option .
+      sa_vbtyp-low = rng_cust_line-low .
+      sa_vbtyp-high = rng_cust_line-high  .
+      APPEND sa_vbtyp TO sa_vbtyp .
+    ENDLOOP .
+
+    TRY.
+        CALL METHOD zdgtcl_bc_const=>get_param_value
+          EXPORTING
+            iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+            iv_fieldname = zdgtcl_bc_const=>mc_fld_server
+          RECEIVING
+            rv_value     = lv_value.
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+    ENDTRY.
+
+    p_aspath = lv_value .
+    REPLACE ALL OCCURRENCES OF '<SYD>'      IN p_aspath  WITH sy-sysid .
+    REPLACE ALL OCCURRENCES OF '<SY-DATUM>' IN p_aspath  WITH sy-datum .
+    REPLACE ALL OCCURRENCES OF '<SY-UZEIT>' IN p_aspath  WITH sy-uzeit .
+  ENDMETHOD .                    "set_values
+
+  METHOD main .
+
+    me->get_data_from_db( ).
+
+    me->get_qty( ) .
+
+    IF NOT sy-batch IS INITIAL .
+
+      me->export_csv_file( ) .
+
+    ELSE.
+      me->display_alv( ).
+    ENDIF.
+  ENDMETHOD .                    "main
+
+  METHOD agg_vkorg .
+    FIELD-SYMBOLS <fs_output> TYPE zdgts_sal_incom_orders_output .
+
+    DATA ls_vkorg_output TYPE zdgts_sal_agg_vkorg_output .
+
+    LOOP AT lt_data_output ASSIGNING <fs_output> .
+
+      MOVE-CORRESPONDING <fs_output> TO ls_vkorg_output .
+
+      COLLECT ls_vkorg_output INTO lt_agg_output .
+
+    ENDLOOP .
+  ENDMETHOD .                    "agg_vkorg
+  METHOD get_data_from_db .
+    DATA lt_data_aux   TYPE STANDARD TABLE OF struct_data .
+    DATA lt_vbfa_ekbe  TYPE STANDARD TABLE OF struct_vbfa .
+    DATA lt_vbfa_mkpf  TYPE STANDARD TABLE OF struct_vbfa .
+    DATA lt_data_matnr TYPE STANDARD TABLE OF struct_data .
+
+    DATA lt_vbak TYPE SORTED TABLE OF struct_vbak WITH UNIQUE KEY vbeln .
+
+    DATA lv_vbeln       TYPE vbeln_va .
+    DATA: lv_amount_out TYPE calp-endpr.
+
+    FIELD-SYMBOLS: <fs_vbak> TYPE struct_vbak ,
+                   <fs_data> TYPE struct_data ,
+                   <fs_vbfa> TYPE struct_vbfa .
+
+    SELECT vbeln erdat erzet ernam
+           vbtyp auart vkorg vtweg
+           spart waerk bstnk bsark
+           lifsk objnr
+      FROM vbak
+      INTO TABLE lt_vbak
+      PACKAGE SIZE pa_psize
+      WHERE vbeln IN so_vbeln
+        AND vkorg IN so_vkorg
+        AND vtweg IN so_vtweg
+        AND spart IN so_spart
+        AND erdat IN so_erdat
+        AND vbtyp IN so_vbtyp
+        AND auart IN so_auart.
+
+
+      SELECT b~vbeln b~posnr b~matnr b~posar b~pstyv b~netwr b~kwmeng b~kmein b~werks b~vstel b~route
+             c~cmgst
+             d~absta d~lfsta
+             e~etenr e~edatu e~wmeng e~bmeng e~lifsp
+        INTO CORRESPONDING FIELDS OF TABLE lt_data_aux
+            FROM  vbap AS b
+             INNER JOIN vbuk AS c
+               ON b~vbeln EQ c~vbeln
+             INNER JOIN vbup AS d
+                ON b~vbeln EQ d~vbeln
+               AND b~posnr EQ d~posnr
+             INNER JOIN vbep AS e
+                ON b~vbeln EQ e~vbeln
+               AND b~posnr EQ e~posnr
+        FOR ALL ENTRIES IN lt_vbak
+        WHERE b~vbeln = lt_vbak-vbeln .
+
+
+      LOOP AT lt_data_aux ASSIGNING <fs_data> .
+
+        IF lv_vbeln <> <fs_data>-vbeln .
+          READ TABLE lt_vbak ASSIGNING <fs_vbak> BINARY SEARCH WITH KEY vbeln = <fs_data>-vbeln .
+          IF sy-subrc = 0 .
+            MOVE-CORRESPONDING <fs_vbak> TO <fs_data> .
+            lv_vbeln = <fs_data>-vbeln .
+          ENDIF .
+        ELSE .
+          MOVE-CORRESPONDING <fs_vbak> TO <fs_data> .
+
+        ENDIF .
+
+
+        IF <fs_data>-waerk NE c_chf .
+
+          CALL FUNCTION 'CONVERT_TO_LOCAL_CURRENCY'
+            EXPORTING
+              date              = <fs_data>-erdat
+              foreign_amount    = <fs_data>-netwr
+              foreign_currency  = <fs_data>-waerk
+              local_currency    = c_chf
+              type_of_rate      = c_rate_p
+*             READ_TCURR        = 'X'
+            IMPORTING
+*             EXCHANGE_RATE     =
+*             FOREIGN_FACTOR    =
+              local_amount      = lv_amount_out
+*             LOCAL_FACTOR      =
+*             EXCHANGE_RATEX    =
+*             FIXED_RATE        =
+*             DERIVED_RATE_TYPE =
+            EXCEPTIONS
+              no_rate_found     = 1
+              overflow          = 2
+              no_factors_found  = 3
+              no_spread_found   = 4
+              derived_2_times   = 5
+              OTHERS            = 6.
+
+          IF sy-subrc = 0.
+            <fs_data>-netwr_chf =  lv_amount_out .
+            <fs_data>-waerk_chf =  c_chf .
+          ENDIF.
+
+        ELSE.
+          <fs_data>-netwr_chf =  <fs_data>-netwr .
+          <fs_data>-waerk_chf =  <fs_data>-waerk .
+
+        ENDIF.
+        APPEND <fs_data> TO lt_data .
+
+      ENDLOOP .
+
+      CLEAR: lv_vbeln .
+      CLEAR: lt_vbak[], lt_data_aux[] .
+    ENDSELECT .
+
+    CHECK sy-subrc = 0 .
+
+    CLEAR lt_data_aux[] .
+    lt_data_aux[] = lt_data[] .
+
+    SORT lt_data_aux BY vbeln .
+    DELETE ADJACENT DUPLICATES FROM lt_data_aux COMPARING vbeln .
+
+    SORT lt_data_aux BY vbeln .
+
+    SELECT vbeln posnr etenr
+        FROM vbuv
+        INTO TABLE lt_incomplete_log
+        FOR ALL ENTRIES IN lt_data_aux
+        WHERE vbeln = lt_data_aux-vbeln .
+
+    SORT lt_incomplete_log BY vbeln .
+
+    lt_data_matnr[] = lt_data[] .
+    SORT lt_data_matnr BY matnr .
+    DELETE ADJACENT DUPLICATES FROM lt_data_matnr COMPARING matnr .
+
+    IF NOT lt_data_matnr IS INITIAL .
+      SELECT a~matnr zzpim_relev maktx
+        FROM mara AS a
+        INNER JOIN makt AS b
+          ON a~matnr = b~matnr
+        INTO TABLE lt_mara
+        FOR ALL ENTRIES IN lt_data_matnr
+        WHERE a~matnr = lt_data_matnr-matnr AND
+              spras = sy-langu .
+    ENDIF.
+
+    SORT lt_mara BY matnr .
+
+    SELECT vbeln a~kunnr parvw name1
+      FROM vbpa AS a
+      LEFT JOIN kna1 AS b
+        ON a~kunnr = b~kunnr
+      INTO TABLE lt_partner_functions
+      FOR ALL ENTRIES IN lt_data_aux
+      WHERE a~vbeln = lt_data_aux-vbeln AND
+          ( a~parvw = c_sold_to_party OR a~parvw = c_ship_to_party ) .
+
+    SORT lt_partner_functions BY vbeln parvw.
+
+    IF NOT lt_data IS INITIAL .
+      SELECT objnr
+        INTO TABLE lt_jest
+        FROM jest
+        FOR ALL ENTRIES IN lt_data
+       WHERE objnr EQ lt_data-objnr
+         AND inact EQ ''
+         AND stat  EQ c_blocked_status.
+    ENDIF.
+
+    SORT lt_jest BY objnr .
+
+    SELECT vbelv posnv vbeln posnn vbtyp_n rfmng meins rfmng_flt vrkme mjahr
+      INTO TABLE lt_vbfa
+      FROM vbfa
+      FOR ALL ENTRIES IN lt_data_aux
+      WHERE vbelv = lt_data_aux-vbeln
+        AND vbtyp_n IN sa_vbtyp .
+
+    LOOP AT lt_vbfa ASSIGNING <fs_vbfa> .
+
+      IF <fs_vbfa>-meins <> <fs_vbfa>-vrkme .
+        IF NOT <fs_vbfa>-rfmng_flt IS INITIAL .
+          <fs_vbfa>-rfmng =  <fs_vbfa>-rfmng / <fs_vbfa>-rfmng_flt .
+        ENDIF.
+      ENDIF .
+    ENDLOOP .
+
+    SORT lt_vbfa BY vbeln .
+    SORT lt_data BY vbeln .
+
+    lt_vbfa_ekbe[] = lt_vbfa[] .
+    DELETE lt_vbfa_ekbe WHERE vbtyp_n NE 'V'
+                           OR rfmng EQ 0 .
+
+    SORT lt_vbfa_ekbe BY vbelv .
+
+    IF NOT lt_vbfa_ekbe IS INITIAL .
+      SELECT ebeln ebelp menge
+        FROM ekbe
+        INTO TABLE lt_ekbe
+        FOR ALL ENTRIES IN lt_vbfa_ekbe
+        WHERE ebeln EQ lt_vbfa_ekbe-vbeln
+          AND vgabe EQ 2 .
+
+
+      SORT lt_ekbe BY ebeln ebelp .
+    ENDIF.
+
+    lt_vbfa_mkpf[] = lt_vbfa[] .
+    DELETE lt_vbfa_mkpf WHERE vbtyp_n NE 'R'
+                           OR rfmng EQ 0 .
+
+    SORT lt_vbfa_mkpf BY vbeln mjahr .
+
+    IF NOT lt_vbfa_mkpf IS INITIAL .
+
+      SELECT mblnr mjahr le_vbeln
+        FROM mkpf
+        INTO TABLE lt_mkpf
+        FOR ALL ENTRIES IN lt_vbfa_mkpf
+        WHERE mblnr EQ lt_vbfa_mkpf-vbeln
+          AND mjahr EQ lt_vbfa_mkpf-mjahr .
+
+      SORT lt_mkpf BY mblnr mjahr .
+    ENDIF.
+
+  ENDMETHOD .                    "get_data_from_db
+
+  METHOD get_qty.
+    DATA lw_data_output TYPE zdgts_sal_incom_orders_output . "struct_output .
+
+
+    DATA lv_sum_pos TYPE rfmng .
+    DATA lv_sum_neg TYPE rfmng .
+    DATA lv_inv_pos TYPE rfmng .
+    DATA lv_inv_neg TYPE rfmng .
+    DATA lv_sum TYPE rfmng .
+    DATA lv_sum_absta TYPE rfmng .
+    DATA lv_flag TYPE abap_bool .
+
+    DATA lv_price_unit TYPE netwr_ap .
+
+    FIELD-SYMBOLS: <fs_makt> TYPE struct_makt ,
+                   <fs_vbfa> TYPE struct_vbfa ,
+                   <fs_vbfa_aux> TYPE struct_vbfa ,
+                   <fs_mara> TYPE struct_mara ,
+                   <fs_data> TYPE struct_data ,
+                   <fs_ekbe> TYPE struct_ekbe ,
+                   <fs_mkpf> TYPE struct_mkpf ,
+                   <fs_incomplete_log> TYPE struct_incomplete_log  ,
+                   <fs_partner_functions> TYPE struct_patners_functions  .
+
+
+    LOOP AT lt_data ASSIGNING <fs_data> .
+      MOVE-CORRESPONDING <fs_data> TO lw_data_output .
+**********************************************************************
+* Header
+**********************************************************************
+
+      READ TABLE lt_mara ASSIGNING <fs_mara> BINARY SEARCH WITH KEY matnr  = <fs_data>-matnr .
+      IF sy-subrc = 0 .
+        MOVE-CORRESPONDING <fs_mara> TO lw_data_output .
+      ENDIF.
+**********************************************************************
+* Determine price unit
+**********************************************************************
+      IF <fs_data>-kwmeng NE 0.
+        IF NOT p_prices IS INITIAL .
+          lv_price_unit = <fs_data>-netwr_chf * 1000 / <fs_data>-kwmeng.
+        ELSE.
+          lv_price_unit = <fs_data>-netwr * 1000 / <fs_data>-kwmeng.
+        ENDIF.
+      ELSE.
+        CLEAR lv_price_unit.
+      ENDIF.
+**********************************************************************
+* Determine price unit
+**********************************************************************
+
+**********************************************************************
+* Forward Orders
+**********************************************************************
+      IF <fs_data>-edatu > sy-datum .
+        lw_data_output-foqty = lw_data_output-foqty + <fs_data>-wmeng .
+        lw_data_output-fonetwr = lv_price_unit * lw_data_output-foqty / 1000 .
+      ENDIF .
+**********************************************************************
+* Forward Orders
+**********************************************************************
+
+***********************************************************************
+** Backorder (Other) Quantity
+***********************************************************************
+      IF <fs_data>-edatu < sy-datum .
+        lw_data_output-bcqty = lw_data_output-bcqty + <fs_data>-bmeng .
+        lw_data_output-bcnetwr = lv_price_unit * lw_data_output-bcqty / 1000 .
+
+      ENDIF.
+***********************************************************************
+** Backorder (Other) Quantity
+***********************************************************************
+
+**********************************************************************
+* Complete with Delivery Block VBEP
+**********************************************************************
+      IF NOT <fs_data>-lifsp IS INITIAL AND NOT <fs_data>-wmeng IS INITIAL .
+        lw_data_output-cdbqty = lw_data_output-cdbqty + <fs_data>-wmeng .
+        lw_data_output-cdbnetwr = lv_price_unit * lw_data_output-cdbqty / 1000 .
+
+        CLEAR: lw_data_output-rcqty , lw_data_output-rcnetwr .
+        CLEAR: lw_data_output-gmqty , lw_data_output-gmnetwr .
+        CLEAR: lw_data_output-incqty , lw_data_output-incnetwr .
+        CLEAR: lw_data_output-cbqty , lw_data_output-cbnetwr .
+
+        CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+        CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+        CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+        CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+      ENDIF .
+**********************************************************************
+* Complete with Delivery Block VBEP
+**********************************************************************
+
+
+**********************************************************************
+* Item
+**********************************************************************
+      AT END OF posnr .
+
+**********************************************************************
+* Partner Functions
+**********************************************************************
+        READ TABLE lt_partner_functions ASSIGNING <fs_partner_functions>
+                BINARY SEARCH WITH KEY vbeln = <fs_data>-vbeln
+                                       parvw = c_sold_to_party .
+
+        IF sy-subrc = 0 .
+          lw_data_output-kunnr = <fs_partner_functions>-kunnr .
+          lw_data_output-sold_name = <fs_partner_functions>-name1 .
+        ENDIF.
+
+        READ TABLE lt_partner_functions ASSIGNING <fs_partner_functions>
+        BINARY SEARCH WITH KEY vbeln = <fs_data>-vbeln
+                               parvw = c_ship_to_party .
+
+        IF sy-subrc = 0 .
+          lw_data_output-kunwe = <fs_partner_functions>-kunnr .
+          lw_data_output-ship_name = <fs_partner_functions>-name1 .
+        ENDIF.
+**********************************************************************
+* Partner Functions
+**********************************************************************
+
+**********************************************************************
+* Material Discription
+**********************************************************************
+        READ TABLE lt_makt ASSIGNING <fs_makt>
+                BINARY SEARCH WITH KEY matnr = <fs_data>-matnr .
+
+        IF sy-subrc = 0 .
+          lw_data_output-maktx = <fs_makt>-maktx .
+        ENDIF .
+**********************************************************************
+* Material Discription
+**********************************************************************
+
+**********************************************************************
+* Status Delivered & Billed & Delivered not Billed.
+*  Not Relevant
+*A Not yet processed
+*B Partially processed
+*C Completely processed
+**********************************************************************
+        IF <fs_data>-lfsta = 'B' OR <fs_data>-lfsta = 'C' OR
+           ( <fs_data>-lfsta IS INITIAL AND <fs_data>-pstyv = 'ZTAS' ) .
+
+          LOOP AT lt_vbfa ASSIGNING <fs_vbfa> WHERE vbelv = <fs_data>-vbeln AND
+                                                    posnv = <fs_data>-posnr  .
+
+            IF <fs_vbfa>-vbtyp_n = 'R' .
+
+              READ TABLE lt_mkpf ASSIGNING <fs_mkpf>
+              BINARY SEARCH WITH KEY mblnr = <fs_vbfa>-vbeln
+                                     mjahr = <fs_vbfa>-mjahr .
+              IF sy-subrc = 0 .
+
+                READ TABLE lt_vbfa ASSIGNING <fs_vbfa_aux>
+                BINARY SEARCH WITH KEY vbeln = <fs_mkpf>-le_vbeln .
+
+                IF sy-subrc = 0 .
+                  IF <fs_vbfa_aux>-vbtyp_n = 'J' .
+                    lv_sum_pos = lv_sum_pos + <fs_vbfa>-rfmng  .
+
+                  ELSEIF <fs_vbfa_aux>-vbtyp_n = 'T' .
+                    lv_sum_neg = lv_sum_neg + <fs_vbfa>-rfmng  .
+                  ENDIF.
+                ENDIF.
+              ELSE.
+                lv_sum_pos = lv_sum_pos + <fs_vbfa>-rfmng  .
+              ENDIF.
+            ENDIF.
+
+            IF <fs_vbfa>-vbtyp_n = 'h' .
+              lv_sum_neg = lv_sum_neg + <fs_vbfa>-rfmng  .
+            ENDIF.
+
+            IF <fs_vbfa>-vbtyp_n = 'M' OR
+               <fs_vbfa>-vbtyp_n = 'P' OR
+               <fs_vbfa>-vbtyp_n = 'S' .
+              lv_inv_pos = lv_inv_pos + <fs_vbfa>-rfmng  .
+            ENDIF.
+
+            IF <fs_vbfa>-vbtyp_n = 'N' OR
+               <fs_vbfa>-vbtyp_n = 'O' .
+              lv_inv_neg = lv_inv_neg + <fs_vbfa>-rfmng  .
+            ENDIF.
+
+            IF <fs_vbfa>-vbtyp_n = 'V' AND <fs_data>-pstyv = 'ZTAS' .
+
+              READ TABLE lt_ekbe ASSIGNING <fs_ekbe>
+              BINARY SEARCH WITH KEY ebeln = <fs_vbfa>-vbeln
+                                     ebelp = <fs_vbfa>-posnn  .
+              IF sy-subrc = 0 .
+                lv_sum_pos = lv_sum_pos + <fs_vbfa>-rfmng .
+              ENDIF.
+            ENDIF.
+          ENDLOOP .
+
+          lv_sum_absta = lv_sum = lv_sum_pos - lv_sum_neg .
+          lw_data_output-dbqty = lv_inv_pos - lv_inv_neg  .
+          lw_data_output-dnbqty = lv_sum - lw_data_output-dbqty .
+          lw_data_output-dbnetwr = lv_price_unit * lw_data_output-dbqty / 1000 .
+          lw_data_output-dnbnetwr = lv_price_unit * lw_data_output-dnbqty / 1000 .
+          CLEAR: lv_sum_pos, lv_sum_neg, lv_sum , lv_inv_pos , lv_inv_neg .
+          lv_flag = abap_true .
+        ENDIF.
+**********************************************************************
+* Status Delivered & Billed & Delivered not Billed.
+**********************************************************************
+
+**********************************************************************
+* Backorder (Drop Shipment) Quantity
+**********************************************************************
+        IF <fs_data>-pstyv IN so_drshp.
+          lw_data_output-bdsqty = <fs_data>-kwmeng .
+          lw_data_output-bdsnetwr = lv_price_unit * lw_data_output-bdsqty / 1000  .
+        ENDIF .
+**********************************************************************
+* Backorder (Drop Shipment) Quantity
+**********************************************************************
+
+**********************************************************************
+* Category Plus Quantity
+**********************************************************************
+        IF <fs_data>-zzpim_relev IN so_matc.
+          lw_data_output-cpqty = <fs_data>-kwmeng .
+          lw_data_output-cpnetwr = lv_price_unit * lw_data_output-cpqty / 1000 .
+        ENDIF .
+**********************************************************************
+* Category Plus Quantity
+**********************************************************************
+
+**********************************************************************
+* Buy to Order Quantity
+**********************************************************************
+        IF <fs_data>-pstyv IN so_btoic.
+          lw_data_output-btoqty = <fs_data>-kwmeng .
+          lw_data_output-btonetwr = lv_price_unit * lw_data_output-btoqty / 1000 .
+        ENDIF .
+**********************************************************************
+* Buy to Order Quantity
+**********************************************************************
+
+**********************************************************************
+* Customer Specific Stock Quantity
+**********************************************************************
+        IF <fs_data>-pstyv IN so_cssic .
+          lw_data_output-cstqty = <fs_data>-kwmeng .
+          lw_data_output-cstnetwr = lv_price_unit * lw_data_output-cstqty / 1000  .
+        ENDIF .
+**********************************************************************
+* Customer Specific Stock Quantity
+**********************************************************************
+
+**********************************************************************
+* Forward Quantity
+**********************************************************************
+        IF ( ( lw_data_output-dbqty + lw_data_output-dnbqty ) GT
+             ( <fs_data>-kwmeng - lw_data_output-foqty ) ) .
+
+          lw_data_output-foqty = lw_data_output-foqty +
+                                 ( <fs_data>-kwmeng - lw_data_output-foqty ) -
+                                 ( lw_data_output-dbqty + lw_data_output-dnbqty ) .
+
+          lw_data_output-fonetwr = lv_price_unit * lw_data_output-foqty / 1000 .
+        ENDIF .
+**********************************************************************
+* Forward Quantity
+**********************************************************************
+
+**********************************************************************
+* Backorder (Other) Quantity
+**********************************************************************
+        IF ( lw_data_output-dbqty + lw_data_output-dnbqty ) < ( lw_data_output-bcqty ) .
+          lw_data_output-bcqty =   lw_data_output-bcqty -  ( lw_data_output-dbqty + lw_data_output-dnbqty ) .
+        ELSE.
+          CLEAR lw_data_output-bcqty .
+        ENDIF .
+
+        lw_data_output-bcnetwr = lv_price_unit * lw_data_output-bcqty / 1000 .
+**********************************************************************
+* Backorder (Other) Quantity
+**********************************************************************
+
+**********************************************************************
+* Incomplete
+**********************************************************************
+        READ TABLE lt_incomplete_log ASSIGNING <fs_incomplete_log>
+                BINARY SEARCH WITH KEY vbeln = <fs_data>-vbeln .
+
+        IF sy-subrc = 0 .
+
+          IF NOT <fs_incomplete_log>-posnr IS INITIAL .
+            IF <fs_data>-posnr EQ <fs_incomplete_log>-posnr .
+              lw_data_output-incqty = <fs_data>-kwmeng .
+            ENDIF.
+          ELSE.
+            lw_data_output-incqty = <fs_data>-kwmeng .
+          ENDIF .
+          lw_data_output-incnetwr = lv_price_unit * lw_data_output-incqty / 1000  .
+
+          CLEAR: lw_data_output-rcqty , lw_data_output-rcnetwr .
+          CLEAR: lw_data_output-gmqty , lw_data_output-gmnetwr .
+          CLEAR: lw_data_output-cdbqty , lw_data_output-cdbnetwr .
+          CLEAR: lw_data_output-cbqty , lw_data_output-cbnetwr .
+
+          CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+          CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+          CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+          CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+        ENDIF .
+**********************************************************************
+* Incomplete
+**********************************************************************
+
+**********************************************************************
+* Credit check was not executed/Status not set
+*A Credit check was executed, document OK
+*B Credit check was executed, document not OK
+*C Credit check was executed, document not OK, partial release
+*D Document released by credit representative
+*Credit Block
+**********************************************************************
+        IF <fs_data>-cmgst = 'B' OR
+           <fs_data>-cmgst = 'C' .
+          lw_data_output-cbqty = <fs_data>-kwmeng .
+          lw_data_output-cbnetwr = lv_price_unit * lw_data_output-cbqty / 1000 .
+
+          CLEAR: lw_data_output-rcqty , lw_data_output-rcnetwr .
+          CLEAR: lw_data_output-gmqty , lw_data_output-gmnetwr .
+          CLEAR: lw_data_output-cdbqty , lw_data_output-cdbnetwr .
+          CLEAR: lw_data_output-incqty , lw_data_output-incnetwr .
+
+          CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+          CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+          CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+          CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+        ENDIF .
+**********************************************************************
+* Credit check was not executed/Status not set
+**********************************************************************
+
+**********************************************************************
+* Complete with Delivery Block
+**********************************************************************
+        IF NOT <fs_data>-lifsk IS INITIAL .
+          lw_data_output-cdbqty =   <fs_data>-kwmeng .
+          lw_data_output-cdbnetwr = lv_price_unit * lw_data_output-cdbqty / 1000  .
+
+          CLEAR: lw_data_output-rcqty , lw_data_output-rcnetwr .
+          CLEAR: lw_data_output-gmqty , lw_data_output-gmnetwr .
+          CLEAR: lw_data_output-cbqty , lw_data_output-cbnetwr .
+          CLEAR: lw_data_output-incqty , lw_data_output-incnetwr .
+
+          CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+          CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+          CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+          CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+        ENDIF .
+**********************************************************************
+* Complete with Delivery Block
+**********************************************************************
+
+**********************************************************************
+* Gross Margin Block.
+**********************************************************************
+        READ TABLE lt_jest TRANSPORTING NO FIELDS
+                BINARY SEARCH WITH KEY objnr = <fs_data>-objnr .
+
+        IF sy-subrc = 0 .
+          lw_data_output-gmqty = <fs_data>-kwmeng .
+          lw_data_output-gmnetwr = lv_price_unit * lw_data_output-gmqty / 1000  .
+
+          CLEAR: lw_data_output-rcqty , lw_data_output-rcnetwr .
+          CLEAR: lw_data_output-cdbqty , lw_data_output-cdbnetwr .
+          CLEAR: lw_data_output-cbqty , lw_data_output-cbnetwr .
+          CLEAR: lw_data_output-incqty , lw_data_output-incnetwr .
+
+          CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+          CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+          CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+          CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+        ENDIF .
+**********************************************************************
+* Gross Margin Block.
+**********************************************************************
+
+**********************************************************************
+* Status Reject Quantity <> C
+*  Not Relevant
+*A Not yet processed
+*B Partially processed
+*C Completely processed
+**********************************************************************
+        IF <fs_data>-absta = 'C' .
+
+          IF lv_flag IS INITIAL .
+            LOOP AT lt_vbfa ASSIGNING <fs_vbfa> WHERE vbelv = <fs_data>-vbeln AND
+                                                 posnv = <fs_data>-posnr  .
+
+              IF <fs_vbfa>-vbtyp_n = 'R' .
+
+                READ TABLE lt_mkpf ASSIGNING <fs_mkpf>
+                BINARY SEARCH WITH KEY mblnr = <fs_vbfa>-vbeln
+                                       mjahr = <fs_vbfa>-mjahr .
+                IF sy-subrc = 0 .
+
+                  READ TABLE lt_vbfa ASSIGNING <fs_vbfa_aux>
+                  BINARY SEARCH WITH KEY vbelv = <fs_data>-vbeln
+                                         posnv = <fs_data>-posnr
+                                         vbeln = <fs_mkpf>-le_vbeln .
+
+                  IF sy-subrc = 0 .
+                    IF <fs_vbfa_aux>-vbtyp_n = 'J' .
+                      lv_sum_pos = lv_sum_pos + <fs_vbfa>-rfmng  .
+
+                    ELSEIF <fs_vbfa_aux>-vbtyp_n = 'T' .
+                      lv_sum_neg = lv_sum_neg + <fs_vbfa>-rfmng  .
+                    ENDIF.
+                  ENDIF.
+                ELSE.
+                  lv_sum_pos = lv_sum_pos + <fs_vbfa>-rfmng  .
+                ENDIF.
+              ENDIF.
+              IF <fs_vbfa>-vbtyp_n = 'h' .
+                lv_sum_neg = lv_sum_neg + <fs_vbfa>-rfmng  .
+              ENDIF.
+            ENDLOOP .
+
+            lw_data_output-rcqty = <fs_data>-kwmeng - ( lv_sum_pos - lv_sum_neg ) .
+          ELSE.
+            lw_data_output-rcqty = <fs_data>-kwmeng - lv_sum_absta .
+          ENDIF.
+
+          lw_data_output-rcqty = <fs_data>-kwmeng - lv_sum_pos - lv_sum_neg .
+          lw_data_output-rcnetwr = lv_price_unit * lw_data_output-rcqty /  1000 .
+          CLEAR: lv_sum_pos, lv_sum_neg , lv_sum_absta , lv_flag.
+
+
+          CLEAR: lw_data_output-gmqty , lw_data_output-gmnetwr .
+          CLEAR: lw_data_output-cdbqty , lw_data_output-cdbnetwr .
+          CLEAR: lw_data_output-cbqty , lw_data_output-cbnetwr .
+          CLEAR: lw_data_output-incqty , lw_data_output-incnetwr .
+
+          CLEAR: lw_data_output-foqty , lw_data_output-fonetwr .
+          CLEAR: lw_data_output-dbqty , lw_data_output-dbnetwr .
+          CLEAR: lw_data_output-dnbqty , lw_data_output-dnbnetwr .
+          CLEAR: lw_data_output-bcqty , lw_data_output-bcnetwr .
+        ENDIF .
+**********************************************************************
+* Status Reject Quantity <> C
+**********************************************************************
+
+**********************************************************************
+* Total Quantity
+**********************************************************************
+        IF NOT lw_data_output-rcqty IS INITIAL OR
+           NOT lw_data_output-gmqty IS INITIAL OR
+           NOT lw_data_output-cdbqty IS INITIAL OR
+           NOT lw_data_output-cbqty IS INITIAL OR
+           NOT lw_data_output-incqty IS INITIAL .
+          CLEAR:  lw_data_output-totalqty ,  lw_data_output-totalnetwr .
+
+        ELSE.
+          lw_data_output-totalqty = <fs_data>-kwmeng -
+                                    ( lw_data_output-dbqty + lw_data_output-dnbqty ) -
+                                    lw_data_output-foqty .
+
+          lw_data_output-totalnetwr = lv_price_unit * lw_data_output-totalqty / 1000 .
+        ENDIF .
+**********************************************************************
+* Total Quantity
+**********************************************************************
+
+        APPEND lw_data_output TO lt_data_output .
+        CLEAR: lw_data_output .
+      ENDAT .
+
+    ENDLOOP.
+  ENDMETHOD .                    "get_qty
+  METHOD display_alv .
+** Declarations for ALV Functions
+    DATA lr_functions TYPE REF TO cl_salv_functions_list.
+    DATA lr_selections TYPE REF TO cl_salv_selections .
+
+    DATA: lo_layout  TYPE REF TO cl_salv_layout,
+*          lf_variant TYPE slis_vari,
+          ls_key     TYPE salv_s_layout_key .
+
+    DATA: lo_events TYPE REF TO cl_salv_events_table.
+
+    SORT lt_data_output BY
+                  vbeln DESCENDING
+                  posnr ASCENDING.
+
+    TRY.
+        CALL METHOD cl_salv_table=>factory
+          IMPORTING
+            r_salv_table = lo_alv
+          CHANGING
+            t_table      = lt_data_output.
+
+      CATCH cx_salv_msg .                               "#EC NO_HANDLER
+    ENDTRY.
+
+    lo_layout = lo_alv->get_layout( ).
+
+    ls_key-report = sy-repid.
+    lo_layout->set_key( ls_key ).
+
+    lo_layout->set_default( abap_true ) .
+
+    lo_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+
+    me->prepare_fieldcatalog( ) .
+
+    lr_selections = lo_alv->get_selections( ).
+    lr_selections->set_selection_mode( if_salv_c_selection_mode=>row_column ).
+
+    lr_functions = lo_alv->get_functions( ).
+
+** Activate All Buttons in Tool Bar
+    lr_functions->set_all( if_salv_c_bool_sap=>true ).
+
+*   all events
+    lo_events = lo_alv->get_event( ).
+*
+*   event handler
+    SET HANDLER me->on_link_click FOR lo_events.
+
+    lo_alv->display( ) .
+
+  ENDMETHOD .                    "display_alv
+
+  METHOD export_csv_file .
+    DATA: file_name   TYPE localfile ,
+          lv_message  TYPE string ,
+          lv_struname TYPE tabname.
+
+    DATA: lr_error TYPE REF TO zcx_core_exception ,
+          ls_export_data TYPE LINE OF truxs_t_text_data ,
+          lt_export_data TYPE truxs_t_text_data.
+
+    DATA: tb_struct TYPE REF TO cl_abap_structdescr,
+          tb_comp   TYPE        abap_component_tab.
+
+    FIELD-SYMBOLS: <fs_components> TYPE abap_compdescr ,
+                   <fs_values>  TYPE abap_compdescr,
+                   <fs_value> TYPE any .
+
+    DATA lv_char_value TYPE string.
+    DATA lv_value TYPE zdgte_value .
+    DATA lv_path  TYPE localfile .
+
+
+    FIELD-SYMBOLS: <fs_export_data> TYPE LINE OF truxs_t_text_data ,
+                   <fs_data_output>  TYPE zdgts_sal_incom_orders_output ,
+                   <fs_agg_output>  TYPE zdgts_sal_agg_vkorg_output  .
+
+    TRY.
+
+        IF NOT p_opta IS INITIAL OR NOT p_optda IS INITIAL .
+
+          CALL METHOD zdgtcl_bc_const=>get_param_value
+            EXPORTING
+              iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+              iv_fieldname = c_fld_file_a
+            RECEIVING
+              rv_value     = lv_value.
+
+          lv_path = p_aspath .
+          file_name = lv_value .
+
+          REPLACE ALL OCCURRENCES OF '<SYD>'      IN file_name  WITH sy-sysid .
+          REPLACE ALL OCCURRENCES OF '<SY-DATUM>' IN file_name  WITH sy-datum .
+          REPLACE ALL OCCURRENCES OF '<SY-UZEIT>' IN file_name  WITH sy-uzeit .
+
+          CONCATENATE lv_path file_name INTO lv_path.
+
+          OPEN DATASET lv_path FOR OUTPUT IN TEXT MODE ENCODING UTF-8 MESSAGE lv_message.
+
+          IF sy-subrc <> 0 .
+            MESSAGE e000(zdgt_bc) WITH lv_message lv_path INTO lv_message.
+            RAISE EXCEPTION TYPE zcx_core_exception.
+          ENDIF.
+
+          me->agg_vkorg( ) .
+
+          lv_struname  =  'ZDGTS_SAL_AGG_VKORG_OUTPUT' .
+
+          me->add_file_header( EXPORTING i_struname = lv_struname
+                                         i_delimiter = ';'
+                               IMPORTING e_export_data = ls_export_data ) .
+
+          TRANSFER ls_export_data TO lv_path .
+          CLEAR ls_export_data .
+
+          tb_struct ?= cl_abap_typedescr=>describe_by_name( lv_struname  ).
+
+          LOOP AT lt_agg_output ASSIGNING <fs_agg_output>  .
+            LOOP AT tb_struct->components ASSIGNING <fs_components>.
+
+              ASSIGN COMPONENT sy-index OF STRUCTURE <fs_components> TO <fs_values>.
+              IF sy-subrc = 0.
+                ASSIGN COMPONENT <fs_values>-name OF STRUCTURE <fs_agg_output> TO <fs_value>.
+                IF sy-subrc = 0 .
+
+                  IF <fs_components>-type_kind NE 'C' .
+                    lv_char_value = <fs_value>   .
+                    CONCATENATE ls_export_data lv_char_value ';' INTO ls_export_data  .
+                  ELSE.
+                    CONCATENATE ls_export_data  <fs_value> ';' INTO ls_export_data  .
+                  ENDIF.
+                ENDIF .
+              ENDIF.
+
+            ENDLOOP.
+            CONDENSE ls_export_data NO-GAPS .
+
+            TRANSFER ls_export_data TO lv_path .
+            CLEAR ls_export_data .
+          ENDLOOP .
+
+          CLOSE DATASET lv_path.
+
+        ENDIF.
+
+        IF NOT p_optd IS INITIAL OR NOT p_optda IS INITIAL .
+
+          CALL METHOD zdgtcl_bc_const=>get_param_value
+            EXPORTING
+              iv_programm  = zdgtcl_bc_const=>mc_prg_incom_orders
+              iv_fieldname = c_fld_file_d
+            RECEIVING
+              rv_value     = lv_value.
+
+          lv_path = p_aspath .
+          file_name = lv_value .
+
+          REPLACE ALL OCCURRENCES OF '<SYD>'      IN file_name  WITH sy-sysid .
+          REPLACE ALL OCCURRENCES OF '<SY-DATUM>' IN file_name  WITH sy-datum .
+          REPLACE ALL OCCURRENCES OF '<SY-UZEIT>' IN file_name  WITH sy-uzeit .
+
+          CONCATENATE lv_path file_name INTO lv_path.
+
+          OPEN DATASET lv_path FOR OUTPUT IN TEXT MODE ENCODING UTF-8 MESSAGE lv_message.
+
+          IF sy-subrc <> 0 .
+            MESSAGE e000(zdgt_bc) WITH lv_message lv_path INTO lv_message.
+            RAISE EXCEPTION TYPE zcx_core_exception.
+          ENDIF.
+
+          lv_struname  =  'ZDGTS_SAL_INCOM_ORDERS_OUTPUT' .
+
+          me->add_file_header( EXPORTING i_struname = lv_struname
+                                         i_delimiter = ';'
+                               IMPORTING e_export_data = ls_export_data ) .
+
+          TRANSFER ls_export_data TO lv_path .
+          CLEAR ls_export_data .
+
+          tb_struct ?= cl_abap_typedescr=>describe_by_name( lv_struname  ).
+
+          LOOP AT lt_data_output ASSIGNING <fs_data_output>  .
+            LOOP AT tb_struct->components ASSIGNING <fs_components>.
+
+              ASSIGN COMPONENT sy-index OF STRUCTURE <fs_components> TO <fs_values>.
+              IF sy-subrc = 0.
+                ASSIGN COMPONENT <fs_values>-name OF STRUCTURE <fs_data_output> TO <fs_value>.
+                IF sy-subrc = 0 .
+
+                  IF <fs_components>-type_kind NE 'C' .
+                    lv_char_value = <fs_value>   .
+                    CONCATENATE ls_export_data lv_char_value ';' INTO ls_export_data  .
+                  ELSE.
+                    CONCATENATE ls_export_data  <fs_value> ';' INTO ls_export_data  .
+                  ENDIF.
+                ENDIF .
+              ENDIF.
+
+            ENDLOOP.
+            CONDENSE ls_export_data NO-GAPS .
+
+            TRANSFER ls_export_data TO lv_path.
+            CLEAR ls_export_data .
+          ENDLOOP .
+
+          CLOSE DATASET lv_path.
+
+        ENDIF.
+
+      CATCH zcx_core_exception INTO lr_error .
+        CLOSE DATASET lv_path.
+        lv_message = lr_error->get_text( ).
+        WRITE: lv_message .
+
+      CATCH cx_proxy_gen_error_message .                "#EC NO_HANDLER
+        CLOSE DATASET lv_path.
+*        lv_message = lr_error->get_text( ).
+        WRITE: lv_message .
+    ENDTRY .
+
+*          zdgtcl_bc_file_tools=>convert_to_csv(
+*               EXPORTING
+*                 it_input     = lt_data_output
+*                 iv_fheader   = abap_true
+*                 iv_hide_empty_line = abap_true
+*               RECEIVING
+*                 rt_data      = lt_export_data ).
+*
+*          LOOP AT lt_export_data ASSIGNING <fs_export_data> .
+**
+*            TRANSFER <fs_export_data> TO lv_path.
+*          ENDLOOP.
+
+   endmethod.                    "export_csv_file
+
+    METHOD prepare_fieldcatalog .
+*  ...Get all the Columns
+      DATA: lo_columns TYPE REF TO cl_salv_columns.
+      DATA: lo_column TYPE REF TO cl_salv_column.
+
+      DATA lo_col TYPE REF TO cl_salv_column_list.
+
+
+      IF lo_alv IS BOUND .
+        lo_columns = lo_alv->get_columns( ).
+
+
+*   set the Column optimization
+        lo_columns->set_optimize( 'X' ).
+
+
+*   Get VBELN column
+        TRY.
+            lo_col ?= lo_columns->get_column( 'VBELN' ).
+          CATCH cx_salv_not_found.                      "#EC NO_HANDLER
+
+          CATCH cx_sy_ref_is_initial .
+        ENDTRY.
+*
+*   Set the HotSpot for VBELN Column
+        TRY.
+            lo_col->set_cell_type( if_salv_c_cell_type=>hotspot ) .
+
+          CATCH cx_salv_data_error .                    "#EC NO_HANDLER
+          CATCH cx_sy_ref_is_initial .
+        ENDTRY.
+
+        TRY.
+            lo_column = lo_columns->get_column( 'RCQTY' ).
+*          lo_column->set_output_length( 10 ).
+            lo_column->set_decimals_column( '0' ).
+            lo_column->set_decimals( '0' ).
+          CATCH cx_salv_not_found.                      "#EC NO_HANDLER
+          CATCH cx_salv_data_error .                    "#EC NO_HANDLER
+
+        ENDTRY.
+      ENDIF .
+    ENDMETHOD .                    "prepare_fieldcatalog
+    METHOD on_link_click .
+      FIELD-SYMBOLS <fs_data> TYPE zdgts_sal_incom_orders_output .
+
+      CASE column .
+        WHEN 'VBELN' .
+
+          READ TABLE lt_data_output ASSIGNING <fs_data> INDEX row .
+          IF sy-subrc = 0 .
+
+            SET PARAMETER ID: 'AUN' FIELD <fs_data>-vbeln .
+            CALL TRANSACTION  'VA03' AND SKIP FIRST SCREEN .
+          ENDIF .
+      ENDCASE .
+    ENDMETHOD .                   "on_link_click
+
+    METHOD add_file_header .
+      DATA: lr_str  TYPE REF TO cl_abap_structdescr,
+            lr_data TYPE REF TO data,
+            lv_dstr TYPE tabname,
+            lt_fcat TYPE slis_t_fieldcat_alv,
+            lr_fcat TYPE REF TO slis_fieldcat_alv,
+            lv_head(4096) TYPE c.
+*
+*      CREATE DATA lr_data LIKE LINE OF it_input.
+*
+      lr_str ?= cl_abap_typedescr=>describe_by_name( i_struname  ).
+      lv_dstr = lr_str->absolute_name+6.
+
+      CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+        EXPORTING
+          i_structure_name       = lv_dstr
+        CHANGING
+          ct_fieldcat            = lt_fcat
+        EXCEPTIONS
+          inconsistent_interface = 1
+          program_error          = 2
+          OTHERS                 = 3.
+
+      IF sy-subrc <> 0.
+        RAISE EXCEPTION TYPE zcx_core_exception.
+      ELSE.
+        LOOP AT lt_fcat REFERENCE INTO lr_fcat.
+          IF sy-tabix EQ 1.
+            CONCATENATE e_export_data lr_fcat->seltext_l INTO e_export_data.
+          ELSE.
+            CONCATENATE e_export_data lr_fcat->seltext_l INTO e_export_data
+                                           SEPARATED BY i_delimiter.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+    ENDMETHOD.                    "add_file_header
+  ENDCLASS .                    "lcl_application IMPLEMENTATION
