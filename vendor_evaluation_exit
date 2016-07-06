@@ -1,0 +1,270 @@
+*&---------------------------------------------------------------------*
+*&  Include           ZXM6LU04
+*&---------------------------------------------------------------------*
+  TYPES:
+    BEGIN OF ty_document,
+      ebeln TYPE ekko-ebeln,
+      ebelp TYPE ekpo-ebelp,
+      bedat TYPE ekko-bedat,
+      erdat TYPE ekes-erdat,
+      eindt TYPE ekes-eindt,
+      belnr TYPE ekbe-belnr,
+      bwart TYPE bwart,
+      budat TYPE budat ,
+    END   OF ty_document.
+
+  DATA:
+    lt_t147       TYPE TABLE OF t147,
+    ls_s013       TYPE          s013,
+    ls_t147       TYPE          t147,
+    lt_t147k      TYPE TABLE OF t147k,
+    ls_t147k      TYPE          t147k,
+    lt_documents  TYPE TABLE OF ty_document,
+    lv_difwrkdays TYPE i,
+    lv_sum        TYPE p DECIMALS 0,
+    lt_dats       TYPE TABLE OF rke_dat,
+    ls_dats       TYPE          rke_dat,
+    lv_value      TYPE p DECIMALS 2 ,
+    lv_count      TYPE int4 ,
+    lv_matnr      TYPE matnr ,
+    lv_datum TYPE sy-datum .
+
+  RANGES:
+    lr_ekgrp        FOR ekko-ekgrp,
+    lr_aedat        FOR ekko-aedat,
+    lr_bstae        FOR ekpo-bstae,
+    lr_spmon        FOR s013-spmon.
+
+  FIELD-SYMBOLS:
+<document> TYPE ty_document .
+
+  CONSTANTS:
+    gc_bstae TYPE bstae VALUE 'Z001' ,
+    gc_bstyp TYPE ebstyp VALUE 'F' ,
+    gc_bsart TYPE bsart VALUE 'ZNB ' ,
+    gc_zekkn TYPE dzekkn VALUE IS INITIAL ,
+    gc_vgabe TYPE vgabe VALUE '1' ,
+    gc_loekz TYPE eloek VALUE IS INITIAL ,
+    gc_bewtp TYPE bewtp VALUE 'E' ,
+    gc_ssour TYPE ssour VALUE IS INITIAL ,
+    gc_vrsio TYPE vrsio VALUE '000' ,
+    gc_sptag TYPE sptag VALUE IS INITIAL ,
+    gc_spwoc TYPE spwoc VALUE IS INITIAL ,
+    gc_spbup TYPE spbup VALUE IS INITIAL ,
+    gc_esokz TYPE esokz VALUE 0,
+    gc_infnr TYPE infnr VALUE IS INITIAL .
+
+* compute date range
+  lr_spmon-sign     = 'I'.
+  lr_spmon-option   = 'BT'.
+  lr_spmon-high     = sy-datum(6).
+  lv_datum = sy-datum - 365 .
+  lr_spmon-low = lv_datum(6) .
+  APPEND lr_spmon.
+
+  SELECT SINGLE matnr
+    FROM s013
+    INTO lv_matnr
+    WHERE ssour EQ gc_ssour
+      AND vrsio EQ gc_vrsio
+      AND spmon IN lr_spmon
+      AND sptag EQ gc_sptag
+      AND spwoc EQ gc_spwoc
+      AND spbup EQ gc_spbup
+      AND ekorg EQ xekorg
+      AND lifnr EQ xlifnr
+      AND esokz EQ gc_esokz
+      AND infnr EQ gc_infnr .
+
+  CHECK sy-subrc = 0 .
+
+* Get maximum previous days
+  SELECT SINGLE * FROM t147 INTO ls_t147 WHERE ekorg = xekorg.
+
+* Get Scores
+  SELECT * FROM t147k INTO TABLE lt_t147k WHERE ekorg = xekorg
+                                          AND   krtyp = xkrtyp.
+
+* compute date range
+  lr_aedat-sign     = 'I'.
+  lr_aedat-option   = 'BT'.
+  lr_aedat-high     = sy-datum.
+  lr_aedat-low      = sy-datum - ls_t147-stage.
+  APPEND lr_aedat.
+
+  IF  xhkrit = '03'  "Main criterion
+  AND xtkrit = '05'. "Subcriterion
+* Improvement, create/call a function module or method
+
+* Get PO data
+    SELECT ekko~ebeln ekpo~ebelp ekko~bedat ekes~erdat
+    INTO TABLE lt_documents
+    FROM ekko
+    INNER JOIN ekpo
+      ON ekpo~ebeln = ekko~ebeln
+     INNER JOIN ekes
+      ON  ekes~ebeln = ekpo~ebeln
+      AND ekes~ebelp = ekpo~ebelp
+    WHERE ekko~bstyp EQ gc_bstyp
+      AND ekko~bsart EQ gc_bsart
+      AND ekko~lifnr EQ xlifnr
+      AND ekko~ekorg EQ xekorg
+      AND ekko~ekgrp IN lr_ekgrp
+      AND ekko~aedat IN lr_aedat
+      AND ekpo~bstae EQ gc_bstae
+      AND ekpo~loekz EQ gc_loekz .
+
+    LOOP AT lt_documents ASSIGNING <document>.
+
+      CLEAR: lv_difwrkdays,
+             lt_dats[],
+             ls_dats.
+
+      CALL FUNCTION 'DURATION_DETERMINE'
+        EXPORTING
+          factory_calendar           = ls_t147-wcidl
+        IMPORTING
+          duration                   = lv_difwrkdays
+        CHANGING
+          start_date                 = <document>-bedat
+          end_date                   = <document>-erdat
+        EXCEPTIONS
+          factory_calendar_not_found = 1
+          date_out_of_calendar_range = 2
+          date_not_valid             = 3
+          unit_conversion_error      = 4
+          si_unit_missing            = 5
+          parameters_not_valid       = 6
+          OTHERS                     = 7.
+      IF sy-subrc = 0.
+* Implement suitable error handling here
+        lv_sum =  ( ( lv_difwrkdays / ls_t147-welfz ) * 100 ) .
+      ENDIF.
+
+      lv_sum = lv_sum * 10 .
+
+      IF lv_sum GT 999.
+        lv_sum = 999.
+      ELSEIF lv_sum LT -999.
+        lv_sum = 999.
+      ENDIF.
+
+      IF lv_sum LT 0.
+        ls_t147k-krvrz = '-'.
+      ELSE.
+        ls_t147k-krvrz = '+'.
+      ENDIF.
+
+      SELECT * FROM t147k INTO TABLE lt_t147k
+             WHERE  ekorg EQ xekorg
+             AND    krtyp EQ xkrtyp
+             AND    krvrz EQ ls_t147k-krvrz
+             AND    krprz GE lv_sum
+             ORDER BY PRIMARY KEY.
+
+      READ TABLE lt_t147k INTO ls_t147k INDEX 1 .
+      IF sy-subrc EQ 0.
+*        xbeurt = xbeurt + ls_t147k-krpkt .
+        lv_value = lv_value + ls_t147k-krpkt .
+      ENDIF.
+    ENDLOOP.
+
+    xbeurt = lv_value / lines( lt_documents[] ).
+  ENDIF.
+
+
+  IF  xhkrit = '03'  "Main criterion
+  AND xtkrit = '04'. "Subcriterion
+* Improvement, create/call a function module or method
+
+**Get_po_data
+    SELECT ekko~ebeln ekpo~ebelp ekko~bedat ekes~erdat ekes~eindt ekbe~belnr ekbe~bwart ekbe~budat
+    INTO TABLE lt_documents
+    FROM ekko
+    INNER JOIN ekpo
+      ON ekko~ebeln = ekpo~ebeln
+     INNER JOIN ekes
+      ON  ekpo~ebeln = ekes~ebeln
+      AND ekpo~ebelp = ekes~ebelp
+      INNER JOIN ekbe
+      ON  ekes~ebeln = ekbe~ebeln
+      AND ekes~ebelp = ekbe~ebelp
+    WHERE ekko~bstyp EQ gc_bstyp
+      AND ekko~bsart EQ gc_bsart
+      AND ekko~lifnr EQ xlifnr
+      AND ekko~ekorg EQ xekorg
+      AND ekko~ekgrp IN lr_ekgrp
+      AND ekko~aedat IN lr_aedat
+      AND ekpo~bstae EQ gc_bstae
+      AND ekpo~loekz EQ gc_loekz
+      AND zekkn EQ gc_zekkn
+      AND vgabe EQ gc_vgabe
+      AND bewtp EQ gc_bewtp
+      AND bwart IN ('101','102','105','106') .
+
+    SORT lt_documents BY belnr DESCENDING .
+
+    DELETE ADJACENT DUPLICATES FROM lt_documents COMPARING ebeln ebelp .
+
+    LOOP AT lt_documents ASSIGNING <document>.
+
+      IF <document>-bwart EQ '101' OR  <document>-bwart EQ '105' .
+        CLEAR: lv_difwrkdays,
+        lt_dats[],
+        ls_dats.
+
+        CALL FUNCTION 'DURATION_DETERMINE'
+          EXPORTING
+*           UNIT                       =
+            factory_calendar           = ls_t147-wcidl
+          IMPORTING
+            duration                   = lv_difwrkdays
+          CHANGING
+            start_date                 = <document>-eindt
+            end_date                   = <document>-budat
+          EXCEPTIONS
+            factory_calendar_not_found = 1
+            date_out_of_calendar_range = 2
+            date_not_valid             = 3
+            unit_conversion_error      = 4
+            si_unit_missing            = 5
+            parameters_not_valid       = 6
+            OTHERS                     = 7.
+        IF sy-subrc = 0.
+          lv_sum = ( ( lv_difwrkdays / ls_t147-welfz ) * 100 ) .
+        ENDIF .
+
+        lv_sum = lv_sum * 10 .
+
+        IF lv_sum GT 999.
+          lv_sum = 999.
+        ELSEIF lv_sum LT -999.
+          lv_sum = 999.
+        ENDIF.
+
+        IF lv_sum LT 0.
+          ls_t147k-krvrz = '-'.
+        ELSE.
+          ls_t147k-krvrz = '+'.
+        ENDIF.
+
+        SELECT * FROM t147k INTO TABLE lt_t147k
+               WHERE  ekorg EQ xekorg
+               AND    krtyp EQ xkrtyp
+               AND    krvrz EQ ls_t147k-krvrz
+               AND    krprz GE lv_sum
+               ORDER BY PRIMARY KEY.
+
+        READ TABLE lt_t147k INTO ls_t147k INDEX 1 .
+        IF sy-subrc EQ 0.
+*          xbeurt =  xbeurt + ls_t147k-krpkt .
+          lv_value = lv_value + ls_t147k-krpkt .
+
+          lv_count = lv_count + 1 .
+        ENDIF.
+      ENDIF .
+    ENDLOOP .
+    IF NOT lv_count IS INITIAL .
+      xbeurt = lv_value / lv_count .
+    ENDIF.
+  ENDIF.
