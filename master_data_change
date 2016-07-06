@@ -1,0 +1,101 @@
+FUNCTION z_dgtmds_matpltdist_save_vnd.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(I_AKTYP) TYPE  AKTYP
+*"     REFERENCE(I_LFM1) TYPE  LFM1
+*"----------------------------------------------------------------------
+  DATA: l_force_distribution TYPE abap_bool,
+        lv_sprc_trigger      TYPE flag.
+
+  DATA lt_mds_vendor TYPE STANDARD TABLE OF struct_mds_vendor .
+  DATA lt_zdgtmds_mara TYPE STANDARD TABLE OF zdgtmds_mara .
+  DATA: lt_mds_mara_i TYPE zdgt_t_mds_mara,
+        lt_mds_mara_u TYPE zdgt_t_mds_mara,
+        lt_mds_mara_d TYPE zdgt_t_mds_mara .
+
+  DATA xzdgtmds_mara TYPE zdgt_t_zzmds_mara .
+  DATA lw_xzdgtmds_mara TYPE zzdgtmds_mara .
+
+  DATA lw_zdgtmds_mara TYPE  zdgtmds_mara .
+
+  DATA: lo_mds_data_distr TYPE REF TO zcl_dgtmds_data_distr.
+
+  FIELD-SYMBOLS <fs_mds_vendor> TYPE struct_mds_vendor .
+
+  IF zdgtcl_bc_addon=>check_addon_active( iv_obj_id   = zdgtcl_bc_addon=>mc_dgt_111_09
+                                          iv_obj_type = zdgtcl_bc_addon=>mc_obj_typ_e
+                                          iv_orgunit  = space
+                                          iv_orgvalue = space ) = abap_false.
+    RETURN.
+  ENDIF.
+
+
+* Don't run database change in a display mode
+  CHECK i_aktyp = gc_aktyp_insert OR
+        i_aktyp = gc_aktyp_modify.
+
+
+  SELECT a~infnr matnr lifnr ekorg werks ekgrp
+    FROM eina AS a
+    INNER JOIN eine AS b
+    ON a~infnr = b~infnr
+    INTO TABLE lt_mds_vendor
+    WHERE a~lifnr = i_lfm1-lifnr AND
+          b~ekorg = i_lfm1-ekorg .
+
+  SELECT *
+    FROM zdgtmds_mara
+    INTO TABLE lt_zdgtmds_mara
+    FOR ALL ENTRIES IN lt_mds_vendor
+    WHERE matnr EQ lt_mds_vendor-matnr AND
+          mdsorg EQ lt_mds_vendor-werks AND
+          lifnr EQ lt_mds_vendor-lifnr .
+
+
+  l_force_distribution = abap_true.
+
+*  Trigger distribution process for flags
+  CREATE OBJECT lo_mds_data_distr.
+
+  LOOP AT lt_mds_vendor ASSIGNING <fs_mds_vendor> WHERE ekgrp <> i_lfm1-ekgrp .
+
+
+    READ TABLE lt_zdgtmds_mara INTO lw_zdgtmds_mara WITH KEY matnr = <fs_mds_vendor>-matnr
+                                                             mdsorg = <fs_mds_vendor>-werks
+                                                             lifnr = <fs_mds_vendor>-lifnr .
+    IF sy-subrc = 0 .
+
+      MOVE-CORRESPONDING lw_zdgtmds_mara TO lw_xzdgtmds_mara .
+      lw_xzdgtmds_mara-ekgrp = i_lfm1-ekgrp .
+      lw_xzdgtmds_mara-kz = 'U' .
+      APPEND lw_xzdgtmds_mara TO xzdgtmds_mara .
+    ENDIF .
+
+  ENDLOOP .
+
+  lo_mds_data_distr->check_datadistr_change(
+     im_force_distribution = l_force_distribution
+     imi_xmdsmara          = xzdgtmds_mara[]
+*       imi_ymdsmara          = yzdgtmds_mara[]
+     iv_sprc_trigger       = lv_sprc_trigger  ).
+
+  lo_mds_data_distr->save_datadistr_requests(
+     im_no_job_trigger = zcl_dgt_mds_md=>puc_x
+     in_update = 'X' ).
+
+* Prepare info about requested database change
+  CALL FUNCTION 'Z_DGTMDS_MATPLTDIST_SAVE_PREP'
+    EXPORTING
+      imi_umds_mara  = xzdgtmds_mara[]
+    IMPORTING
+      exi_mds_mara_i = lt_mds_mara_i[]
+      exi_mds_mara_u = lt_mds_mara_u[]
+      exi_mds_mara_d = lt_mds_mara_d[].
+
+* Trigger database update
+  CALL FUNCTION 'Z_DGTMDS_MATPLTDIST_SAVE_DB'
+    IN UPDATE TASK
+    EXPORTING
+      imi_mds_mara_u = lt_mds_mara_u[].
+ENDFUNCTION.
