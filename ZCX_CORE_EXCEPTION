@@ -1,0 +1,333 @@
+Interfaces:
+IF_MESSAGE
+IF_SERIALIZABLE_OBJECT
+IF_PROXY_T100_MESSAGE
+
+CX_PROXY_GEN_ERROR_MESSAGE
+
+class ZCX_CORE_EXCEPTION definition
+  public
+  inheriting from CX_PROXY_GEN_ERROR_MESSAGE
+  create public .
+
+public section.
+  type-pools ABAP .
+
+  data CONTEXT type CHAR1024 .
+
+  methods CONSTRUCTOR
+    importing
+      !TEXTID like TEXTID optional
+      !PREVIOUS like PREVIOUS optional
+      !MSGTY type SY-MSGTY default SY-MSGTY
+      !MSGID type SY-MSGID default SY-MSGID
+      !MSGNO type SY-MSGNO default SY-MSGNO
+      !MSGV1 type SY-MSGV1 default SY-MSGV1
+      !MSGV2 type SY-MSGV2 default SY-MSGV2
+      !MSGV3 type SY-MSGV3 default SY-MSGV3
+      !MSGV4 type SY-MSGV4 default SY-MSGV4
+      !LOG type SPRX_LOG_T optional
+      !CONTEXT type CHAR1024 optional .
+  methods DISPLAY_MESSAGE_IN_POPUP .
+  methods DISPLAY_MESSAGE_IN_STATUS_BAR .
+  methods DISPLAY_MESSAGE
+    importing
+      !IV_MSGTY type SYMSGTY .
+  methods DISPLAY_MESSAGE_LIKE
+    importing
+      !IV_MSGTY type SYMSGTY
+      !IV_MSGTY_LIKE type SYMSGTY optional .
+  methods MAP_MESSAGE_TO_BAPIRET2
+    returning
+      value(RS_BAPIRET2_MESSAGE) type BAPIRET2 .
+	 
+method if_message~get_text.
+  data:
+    ls_log like line of me->log.
+
+  if not msgid is initial.
+    message id msgid type 'I' number msgno
+      with msgv1 msgv2 msgv3 msgv4
+      into result.
+  elseif lines( me->log ) > 0.
+    read table me->log into ls_log index 1.
+    message id     ls_log-msgid
+            type   ls_log-msgty
+            number ls_log-msgno
+            with   ls_log-msgv1
+                   ls_log-msgv2
+                   ls_log-msgv3
+                   ls_log-msgv4
+            into   result.
+  else.
+    result = super->if_message~get_text( ).
+  endif.
+endmethod.
+method if_message~get_longtext.
+  if not msgid is initial.
+    result = get_t100_long_text(
+       msgid             = msgid
+       msgno             = msgno
+       msgv1             = msgv1
+       msgv2             = msgv2
+       msgv3             = msgv3
+       msgv4             = msgv4
+       preserve_newlines = preserve_newlines
+     ).
+  else.
+    result = super->if_message~get_longtext( ).
+  endif.
+endmethod.
+method if_proxy_t100_message~get_t100_message.
+  data: ls_log like line of me->log.
+
+  if not me->msgid is initial.
+    msg-msgty = me->msgty.
+    msg-msgid = me->msgid.
+    msg-msgno = me->msgno.
+    msg-msgv1 = me->msgv1.
+    msg-msgv2 = me->msgv2.
+    msg-msgv3 = me->msgv3.
+    msg-msgv4 = me->msgv4.
+
+    if msg-msgty is initial.
+      msg-msgty = msgty.
+    endif.
+  elseif lines( me->log ) > 0.
+    read table me->log into ls_log index 1.
+    msg-msgty = ls_log-msgty.
+    msg-msgid = ls_log-msgid.
+    msg-msgno = ls_log-msgno.
+    msg-msgv1 = ls_log-msgv1.
+    msg-msgv2 = ls_log-msgv2.
+    msg-msgv3 = ls_log-msgv3.
+    msg-msgv4 = ls_log-msgv4.
+    if msg-msgty is initial.
+      msg-msgty = msgty.
+    endif.
+  else.
+    super->get_t100_message(
+      exporting
+        msgty           = msgty
+        ignore_previous = ignore_previous
+      importing
+        msg             = msg
+     ).
+  endif.
+endmethod.
+method if_proxy_t100_message~get_t100_msgty.
+  data:
+    ls_msg type t_t100_msg.
+  get_t100_message(
+    exporting
+      msgty           = msgty
+      ignore_previous = ignore_previous
+    importing
+      msg             = ls_msg
+  ).
+  rval = ls_msg.
+endmethod.
+METHOD get_source_position.
+* EXPORTING program_name include_name source_line
+  CALL 'GET_SOURCE_POSITION'
+    ID 'INTERNAL'     FIELD internal_source_pos
+    ID 'PROGRAM_NAME' FIELD program_name
+    ID 'INCLUDE_NAME' FIELD include_name
+    ID 'SOURCE_LINE'  FIELD source_line.
+endmethod.
+method GET_DEFAULT_TEXTID.
+  data:
+    lv_classname type abap_abstypename,
+    lr_clone type ref to cx_proxy_fault.
+
+  try.
+      lv_classname = cl_abap_classdescr=>get_class_name( p_object = me ).
+      create object lr_clone type (lv_classname).
+      rval = lr_clone->textid.
+    catch cx_root.  "#EC CATCH_ALL
+      rval = me->cx_root.
+  endtry.
+endmethod.
+method GET_T100_LONG_TEXT.
+  data:
+    lr_t100 type ref to lcx_t100.
+  create object lr_t100
+    exporting
+      msgid = msgid
+      msgno = msgno
+      attr1 = msgv1
+      attr2 = msgv2
+      attr3 = msgv3
+      attr4 = msgv4.
+  rval = lr_t100->get_longtext( preserve_newlines = preserve_newlines ).
+endmethod.
+method get_t100_from_exception.
+
+  data:
+    lv_default_textid type sotr_conc,
+    lr_proxy_fault type ref to cx_proxy_fault.
+
+  clear msg.
+
+  try.
+      lr_proxy_fault ?= exception.
+      lv_default_textid = lr_proxy_fault->get_default_textid( ).
+    catch cx_sy_move_cast_error.                        "#EC NO_HANDLER
+  endtry.
+
+  if exception->previous is bound and exception->textid = lv_default_textid and force_show_default_textid = abap_false.
+    get_t100_from_exception(
+      exporting
+        exception = exception->previous
+        msgty     = msgty
+      importing
+        msg       = msg
+    ).
+  else.
+
+    lcx_t100=>t100_from_exception(
+      exporting
+        exception = exception
+      exceptions
+        failed    = 0
+    ).
+
+    msg-msgty = msgty.
+    msg-msgid = sy-msgid.
+    msg-msgno = sy-msgno.
+    msg-msgv1 = sy-msgv1.
+    msg-msgv2 = sy-msgv2.
+    msg-msgv3 = sy-msgv3.
+    msg-msgv4 = sy-msgv4.
+  endif.
+
+endmethod.
+method add_exc_to_previous.
+
+  data: lx_root type ref to cx_root.
+
+  lx_root = me.
+  while lx_root->previous is bound.
+    lx_root = lx_root->previous.
+  endwhile.
+
+  lx_root->previous = added_exc.
+
+
+endmethod.
+method MESSAGE.
+
+  data o_proxy_t100_message type ref to if_proxy_t100_message.
+  data ls_msg type cx_proxy_fault=>t_t100_msg.
+
+  try.
+      o_proxy_t100_message ?= exception.
+      o_proxy_t100_message->get_t100_message( importing msg = ls_msg ).
+
+    catch cx_sy_move_cast_error.
+      ls_msg-msgty = type.
+  endtry.
+
+  if o_proxy_t100_message is not bound or
+     ls_msg-msgid = '00' and ls_msg-msgno = '001'.
+*   special case: for this ID we assume that the exception is not
+*   initial filled with a t100 message but with an OTR text only
+*   so we use the message construct with exception
+    message exception type 'S' display like ls_msg-msgty.
+  else.
+*   for all others we use message without exception but with the
+*   T100-Message to get a well formated longtext (SAPScript enabled)
+    message id ls_msg-msgid
+            type 'S'
+            number ls_msg-msgno
+            with ls_msg-msgv1 ls_msg-msgv2 ls_msg-msgv3 ls_msg-msgv4
+            display like ls_msg-msgty.
+  endif.
+
+endmethod.
+method CONSTRUCTOR.
+CALL METHOD SUPER->CONSTRUCTOR
+EXPORTING
+TEXTID = TEXTID
+PREVIOUS = PREVIOUS
+MSGTY = MSGTY
+MSGID = MSGID
+MSGNO = MSGNO
+MSGV1 = MSGV1
+MSGV2 = MSGV2
+MSGV3 = MSGV3
+MSGV4 = MSGV4
+LOG = LOG
+.
+me->CONTEXT = CONTEXT .
+endmethod.
+method DISPLAY_MESSAGE_IN_POPUP.
+  me->display_message( 'I' ).
+endmethod.
+method DISPLAY_MESSAGE_IN_STATUS_BAR.
+  me->display_message( me->msgty ).
+endmethod.
+method DISPLAY_MESSAGE.
+
+  CHECK me->msgid <> space AND
+        iv_msgty  <> space .
+
+
+   MESSAGE ID me->msgid
+          TYPE iv_msgty
+        NUMBER me->msgno
+        WITH   me->msgv1
+               me->msgv2
+               me->msgv3
+               me->msgv4.
+
+
+endmethod.
+method DISPLAY_MESSAGE_LIKE.
+
+  CHECK me->msgid <> space AND
+        iv_msgty  <> space .
+
+  IF iv_msgty_like IS INITIAL.
+
+    MESSAGE ID me->msgid
+          TYPE iv_msgty
+        NUMBER me->msgno
+        WITH   me->msgv1
+               me->msgv2
+               me->msgv3
+               me->msgv4.
+
+  ELSE.
+
+    MESSAGE ID me->msgid
+          TYPE iv_msgty
+        NUMBER me->msgno
+        WITH   me->msgv1
+               me->msgv2
+               me->msgv3
+               me->msgv4
+        DISPLAY LIKE  iv_msgty_like.
+
+  ENDIF.
+
+endmethod.
+method MAP_MESSAGE_TO_BAPIRET2.
+
+  CLEAR rs_bapiret2_message.
+
+  MESSAGE ID me->msgid
+              TYPE me->msgty
+            NUMBER me->msgno
+              WITH me->msgv1 me->msgv2 me->msgv3 me->msgv4
+              INTO rs_bapiret2_message-message.
+
+  rs_bapiret2_message-type       = me->msgty.
+  rs_bapiret2_message-id         = me->msgid.
+  rs_bapiret2_message-number     = me->msgno.
+  rs_bapiret2_message-message_v1 = me->msgv1.
+  rs_bapiret2_message-message_v2 = me->msgv2.
+  rs_bapiret2_message-message_v3 = me->msgv3.
+  rs_bapiret2_message-message_v4 = me->msgv4.
+
+endmethod.
