@@ -1,0 +1,1095 @@
+FUNCTION ZWS_INSERT_CADASTRO.
+*"----------------------------------------------------------------------
+*"*"Interface local:
+*"  TABLES
+*"      ZZIT0185 STRUCTURE  ZIT0185 OPTIONAL
+*"      ZZIT0002 STRUCTURE  ZIT0002 OPTIONAL
+*"      ZZIT0001 STRUCTURE  ZIT0001 OPTIONAL
+*"      ZZIT0022 STRUCTURE  ZIT0022 OPTIONAL
+*"      ZZIT9001 STRUCTURE  PS9001 OPTIONAL
+*"      ZZIT0021 STRUCTURE  ZIT0021 OPTIONAL
+*"      ZZIT9009 STRUCTURE  PS9009 OPTIONAL
+*"      ZZIT9004 STRUCTURE  PS9004 OPTIONAL
+*"      ZZIT0006 STRUCTURE  ZIT0006 OPTIONAL
+*"      ZZIT9002 STRUCTURE  PS9002 OPTIONAL
+*"      ZZIT9011 STRUCTURE  PS9011 OPTIONAL
+*"      ZZIT9010 STRUCTURE  PS9010 OPTIONAL
+*"      ZZIT9003 STRUCTURE  PS9003 OPTIONAL
+*"      ZZIT0041 STRUCTURE  ZIT0041 OPTIONAL
+*"      ZZIT9006 STRUCTURE  PS9006 OPTIONAL
+*"      ZZIT9007 STRUCTURE  PS9007 OPTIONAL
+*"      ZZIT9008 STRUCTURE  PS9008 OPTIONAL
+*"      ZZIT9013 STRUCTURE  PS9013 OPTIONAL
+*"      ZZIT9012 STRUCTURE  P9012 OPTIONAL
+*"      ZZIT2010 STRUCTURE  P2010 OPTIONAL
+*"  CHANGING
+*"     VALUE(RETURN_CODE) TYPE  CHAR1
+*"----------------------------------------------------------------------
+
+  DATA: L_PERNR           type PSKEY-PERNR,
+        ls_hr_return  like HRHRMM_MSG OCCURS 1 WITH HEADER LINE,
+        ls_p0000          type P0000,
+        ls_p0001          type p0001,
+        ls_p0002          type p0002,
+        ls_return         type bapireturn1,
+        ls_return_0       type bapireturn.
+
+  DATA: ls_proposed_values type pprop,
+        lt_proposed_values type table of pprop,
+        modif_keys         type TABLE OF PSKEY,
+        lv_operation       type actio.
+
+  lv_operation = 'INS'.
+
+** Obter o nº de funcionário (PERNR)
+*  call function 'NUMBER_GET_NEXT'
+*    EXPORTING
+*      nr_range_nr             = '03'
+*      object                  = 'RP_PREL'
+*    IMPORTING
+*      number                  = nf_pernr
+*    EXCEPTIONS
+*      interval_not_found      = 1
+*      number_range_not_intern = 2
+*      object_not_found        = 3
+*      quantity_is_0           = 4
+*      quantity_is_not_1       = 5
+*      interval_overflow       = 6
+*      buffer_overflow         = 7
+*      others                  = 8.
+*  if sy-subrc ne 0.
+*    message id sy-msgid type sy-msgty number sy-msgno
+*      with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+*  endif.
+
+* Medida de admissão
+  ls_p0000-MASSN = 'Z1'.
+  ls_p0000-MASSG = '01'.
+
+*   IT0000 - Medidas (Begin)
+**  Tipo de medida
+  ls_proposed_values-infty = '0000'.
+  ls_proposed_values-fname = 'P0000-MASSN'.
+  ls_proposed_values-fval  =  ls_p0000-MASSN.
+  append ls_proposed_values to lt_proposed_values.
+
+**  Motivo da medida
+  ls_proposed_values-infty = '0000'.
+  ls_proposed_values-fname = 'P0000-MASSG'.
+  ls_proposed_values-fval  =  ls_p0000-MASSG.
+  append ls_proposed_values to lt_proposed_values.
+*   IT0000 - Medidas (End)
+
+*   IT0001 - Atribuição Organizacional (Begin)
+* Preeche valores a serem passados por parâmetro na FM 'HR_MAINTAIN_MASTERDATA'
+
+  DATA: ZZIT0001_wa TYPE ZIT0001.
+
+  READ TABLE ZZIT0001 INTO ZZIT0001_wa index 1.
+
+  ZZIT0001_wa-werks = 'M001'.
+  ZZIT0001_wa-persg = '1'.
+  ZZIT0001_wa-persk = 'Z1'.
+  ZZIT0001_wa-BTRTL = 'MI01'.
+
+  ls_p0001-werks = ZZIT0001_wa-werks.
+  ls_p0001-persg = ZZIT0001_wa-persg.
+  ls_p0001-persk = ZZIT0001_wa-persk.
+*  ls_p0001-plans = '99999999'.
+
+
+**  Empresa
+*  ls_proposed_values-infty = '0001'.
+*  ls_proposed_values-fname = 'P0001-BUKRS'.
+*  ls_proposed_values-fval  = 'GFRU'.
+*  append ls_proposed_values to lt_proposed_values.
+
+**  Área de Recursos Humanos
+  ls_proposed_values-infty = '0001'.
+  ls_proposed_values-fname = 'P0001-WERKS'.
+  ls_proposed_values-fval  = ZZIT0001_wa-werks.
+  append ls_proposed_values to lt_proposed_values.
+
+**  Subárea de Recursos Humanos
+  ls_proposed_values-infty = '0001'.
+  ls_proposed_values-fname = 'P0001-BTRTL'.
+  ls_proposed_values-fval  = ZZIT0001_wa-btrtl.
+  append ls_proposed_values to lt_proposed_values.
+
+**  Grupo de empregados
+  ls_proposed_values-infty = '0001'.
+  ls_proposed_values-fname = 'P0001-PERSG'.
+  ls_proposed_values-fval  = ZZIT0001_wa-persg.
+  append ls_proposed_values to lt_proposed_values.
+
+**  Subgrupo de empregados
+  ls_proposed_values-infty = '0001'.
+  ls_proposed_values-fname = 'P0001-PERSK'.
+  ls_proposed_values-fval  = ZZIT0001_wa-persk.
+  append ls_proposed_values to lt_proposed_values.
+
+**  Área de processamento da folha de pagamento
+  ls_proposed_values-infty = '0001'.
+  ls_proposed_values-fname = 'P0001-ABKRS'.
+  ls_proposed_values-fval  = '99'.
+  append ls_proposed_values to lt_proposed_values.
+
+* IT0001 - End
+
+*   IT0002 - Dados Pessoais (Begin)
+  DATA: ZZIT0002_wa TYPE ZIT0002.
+
+  READ TABLE ZZIT0002 INTO ZZIT0002_wa index 1.
+
+  IF NOT ZZIT0002_wa IS INITIAL.
+
+*  ZZIT0002_wa-CNAME = 'Bruno Silva'.
+*  ZZIT0002_wa-VORNA = 'Bruno'.
+*  ZZIT0002_wa-NACHN = 'Silva'.
+*  ZZIT0002_wa-RUFNM = 'BSilva'.
+*  ZZIT0002_wa-GBDAT = '19750812'.
+*  ZZIT0002_wa-GBLND = 'PT'.
+*  ZZIT0002_wa-ZLOCNASC = 'Lobito'.
+*  ZZIT0002_wa-NATIO = 'PT'.
+*  ZZIT0002_wa-FAMST = '1'.
+*  ZZIT0002_wa-GESCH = '1'.
+*  ZZIT0002_wa-ZRACA = '2'.
+
+**  Nome completo
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-CNAME'.
+    ls_proposed_values-fval  = ZZIT0002_wa-CNAME.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Nome próprio
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-VORNA'.
+    ls_proposed_values-fval  = ZZIT0002_wa-VORNA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Apelido
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-NACHN'.
+    ls_proposed_values-fval  = ZZIT0002_wa-NACHN.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Conhecido como (Pseudónimo)
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-RUFNM'.
+    ls_proposed_values-fval  = ZZIT0002_wa-RUFNM.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de nascimento
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-GBDAT'.
+    ls_proposed_values-fval  = ZZIT0002_wa-GBDAT.
+    append ls_proposed_values to lt_proposed_values.
+
+**  País de nascimento
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-GBLND'.
+    ls_proposed_values-fval  = ZZIT0002_wa-GBLND.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Localidade de nascimento
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-ZLOCNASC'.
+    ls_proposed_values-fval  = ZZIT0002_wa-ZLOCNASC.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Província
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-ZPROVNASC'.
+    ls_proposed_values-fval  = ZZIT0002_wa-ZPROVNASC.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Município
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-ZMUNICNASC'.
+    ls_proposed_values-fval  = ZZIT0002_wa-ZMUNICNASC.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Nacionalidade
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-NATIO'.
+    ls_proposed_values-fval  = ZZIT0002_wa-NATIO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Estado civil
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-FAMST'.
+    ls_proposed_values-fval  = ZZIT0002_wa-FAMST.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Chave do Sexo
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-GESCH'.
+    ls_proposed_values-fval  = ZZIT0002_wa-GESCH.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Raça
+    ls_proposed_values-infty = '0002'.
+    ls_proposed_values-fname = 'P0002-ZRACA'.
+    ls_proposed_values-fval  = ZZIT0002_wa-ZRACA.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT0002 - End
+
+* IT0022 - Formação Académica (Begin)
+
+  DATA: ZZIT0022_wa TYPE ZIT0022.
+
+  READ TABLE ZZIT0022 INTO ZZIT0022_wa index 1.
+
+  IF NOT ZZIT0022_wa IS INITIAL.
+
+**  Tipo de formação
+    ls_proposed_values-infty = '0022'.
+    ls_proposed_values-fname = 'P0022-SLART'.
+    ls_proposed_values-fval  = ZZIT0022_wa-SLART.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Curso
+    ls_proposed_values-infty = '0022'.
+    ls_proposed_values-fname = 'P0022-AUSBI'.
+    ls_proposed_values-fval  = ZZIT0022_wa-AUSBI.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de conclusão
+    ls_proposed_values-infty = '0022'.
+    ls_proposed_values-fname = 'P0022-ENDDA'.
+    ls_proposed_values-fval  = ZZIT0022_wa-ENDDA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  BEGDA
+    ls_proposed_values-infty = '0022'.
+    ls_proposed_values-fname = 'P0022-BEGDA'.
+    ls_proposed_values-fval  = ZZIT0022_wa-ENDDA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Estabelecimento de ensino
+    ls_proposed_values-infty = '0022'.
+    ls_proposed_values-fname = 'P0022-INSTI'.
+    ls_proposed_values-fval  = ZZIT0022_wa-INSTI.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT0022 - End
+
+* IT9001 - Situação profissional (Begin)
+
+  DATA: ZZIT9001_wa TYPE PS9001.
+
+  READ TABLE ZZIT9001 INTO ZZIT9001_wa index 1.
+
+  IF NOT ZZIT9001_wa IS INITIAL.
+
+**  Área preferencial
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZAREAPREF'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZAREAPREF.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Departamento de Colocação / Órgão
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZDEPARTMNT'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZDEPARTMNT.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Tempo permanência no departamento
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZTEMPODEP'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZTEMPODEP.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Formação profissional
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZFORMPROF'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZFORMPROF.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Número de cursos frequentados
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZNUMCURSFREQ'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZNUMCURSFREQ.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Profissão
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZPROFISSAO'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZPROFISSAO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Função
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZFUNCAO'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZFUNCAO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Carreira
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-Z_CARREIRA'.
+    ls_proposed_values-fval  = ZZIT9001_wa-Z_CARREIRA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Categoria
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZCATEGORIA'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZCATEGORIA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Número do Despacho / Ordem de Serviço
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-Z_NUMDESPACHO'.
+    ls_proposed_values-fval  = ZZIT9001_wa-Z_NUMDESPACHO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Dificuldades laborais
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZDIFLABORAIS'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZDIFLABORAIS.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Descrição das dificuldades laborais
+    ls_proposed_values-infty = '9001'.
+    ls_proposed_values-fname = 'P9001-ZDIFLABDESC'.
+    ls_proposed_values-fval  = ZZIT9001_wa-ZDIFLABDESC.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9001 - End
+
+* IT9013 - Dados bancários (Begin)
+
+  DATA: ZZIT9013_wa type PS9013.
+
+  READ TABLE ZZIT9013 INTO ZZIT9013_wa INDEX 1.
+
+  IF NOT ZZIT9013_wa IS INITIAL.
+
+**  Banco
+    ls_proposed_values-infty = '9013'.
+    ls_proposed_values-fname = 'P9013-ZDESCBANCO'.
+    ls_proposed_values-fval  = ZZIT9013_wa-ZDESCBANCO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Cód. Banco
+    ls_proposed_values-infty = '9013'.
+    ls_proposed_values-fname = 'P9013-ZCODBANCO'.
+    ls_proposed_values-fval  = ZZIT9013_wa-ZCODBANCO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Cód. Agência
+    ls_proposed_values-infty = '9013'.
+    ls_proposed_values-fname = 'P9013-ZCODAGENCIA'.
+    ls_proposed_values-fval  = ZZIT9013_wa-ZCODAGENCIA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Conta Bancária
+    ls_proposed_values-infty = '9013'.
+    ls_proposed_values-fname = 'P9013-ZNUMCONTA'.
+    ls_proposed_values-fval  = ZZIT9013_wa-ZNUMCONTA.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9013 - End
+
+
+* IT9009 - Assistência médica (Begin)
+
+  DATA: ZZIT9009_wa type PS9009.
+
+  READ TABLE ZZIT9009 INTO ZZIT9009_wa INDEX 1.
+
+  IF NOT ZZIT9009_wa IS INITIAL.
+
+**  Teve Apoio Medico da Direcção?
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZAPMEDDIR'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZAPMEDDIR.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Teve Apoio Medico da Família?
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZAPMEDFAMI'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZAPMEDFAMI.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Patologia grave?
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZPATOLGRAVE'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZPATOLGRAVE.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Identificação da patologia
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZIDENTPATOL'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZIDENTPATOL.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Grupo sanguíneo
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZGRPSANG'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZGRPSANG.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Dador?
+    ls_proposed_values-infty = '9009'.
+    ls_proposed_values-fname = 'P9009-ZDADOR'.
+    ls_proposed_values-fval  = ZZIT9009_wa-ZDADOR.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9009 - End
+
+
+* IT9004 - Dados de Transporte (Begin)
+
+  DATA: ZZIT9004_wa type PS9004.
+
+  READ TABLE ZZIT9004 INTO ZZIT9004_wa INDEX 1.
+
+  IF NOT ZZIT9004_wa IS INITIAL.
+
+**  Transporte pessoal?
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZTRANSPP'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZTRANSPP.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Forma de deslocação para o trabalho
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZMDESLOC'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZMDESLOC.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Assiduidade e pontualidade
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZASSIDPONT'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZASSIDPONT.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Hora normal chegada
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZHENTSERV'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZHENTSERV.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Hora normal saída
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZHSAISERV'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZHSAISERV.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Apoio monetário para transporte?
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZAPMONTRANS'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZAPMONTRANS.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Circunstância para apoio monetário
+    ls_proposed_values-infty = '9004'.
+    ls_proposed_values-fname = 'P9004-ZCIRCUNSTAPM'.
+    ls_proposed_values-fval  = ZZIT9004_wa-ZCIRCUNSTAPM.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9004 - End
+
+* IT9002 - Outras informações (Begin)
+
+  DATA: ZZIT9002_wa TYPE PS9002.
+
+  READ TABLE ZZIT9002 INTO ZZIT9002_wa INDEX 1.
+
+  IF NOT ZZIT9002_wa IS INITIAL.
+
+**  Boas relações com os colegas do departamento?
+    ls_proposed_values-infty = '9002'.
+    ls_proposed_values-fname = 'P9002-ZRELACCOL'.
+    ls_proposed_values-fval  = ZZIT9002_wa-ZRELACCOL.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Boas relações com os colegas em geral?
+    ls_proposed_values-infty = '9002'.
+    ls_proposed_values-fname = 'P9002-ZRELACCOLGER'.
+    ls_proposed_values-fval  = ZZIT9002_wa-ZRELACCOLGER.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Trabalha noutras empresas?
+    ls_proposed_values-infty = '9002'.
+    ls_proposed_values-fname = 'P9002-ZOUTROTRAB'.
+    ls_proposed_values-fval  = ZZIT9002_wa-ZOUTROTRAB.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Identificação das empresas?
+    ls_proposed_values-infty = '9002'.
+    ls_proposed_values-fname = 'P9002-ZIDENTOUTROTRAB'.
+    ls_proposed_values-fval  = ZZIT9002_wa-ZIDENTOUTROTRAB.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9002 - End
+
+* IT9011 - Vestuário (Begin)
+
+  DATA: ZZIT9011_wa TYPE PS9011.
+
+  READ TABLE ZZIT9011 INTO ZZIT9011_wa INDEX 1.
+
+  IF NOT ZZIT9011_wa IS INITIAL.
+
+**  Nº Sapato?
+    ls_proposed_values-infty = '9011'.
+    ls_proposed_values-fname = 'P9011-ZNSAPATO'.
+    ls_proposed_values-fval  = ZZIT9011_wa-ZNSAPATO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Nº Calça?
+    ls_proposed_values-infty = '9011'.
+    ls_proposed_values-fname = 'P9011-ZNCALCA'.
+    ls_proposed_values-fval  = ZZIT9011_wa-ZNCALCA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Nº Saia?
+    ls_proposed_values-infty = '9011'.
+    ls_proposed_values-fname = 'P9011-ZNSAIA'.
+    ls_proposed_values-fval  = ZZIT9011_wa-ZNSAIA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Nº Camisa?
+    ls_proposed_values-infty = '9011'.
+    ls_proposed_values-fname = 'P9011-ZNCAMISA'.
+    ls_proposed_values-fval  = ZZIT9011_wa-ZNCAMISA.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9011 - End
+
+* IT9010 - Situação mulitar (Begin)
+
+  DATA: ZZIT9010_wa TYPE PS9010.
+
+  READ TABLE ZZIT9010 INTO ZZIT9010_wa INDEX 1.
+
+  IF NOT ZZIT9010_wa IS INITIAL.
+
+**  Situação militar
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZSITMILIT'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZSITMILIT.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de ingresso no MinInt
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZDTINI'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZDTINI.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Proveniência
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZPROVEN'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZPROVEN.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Grau Militar
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZGRAUFAA'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZGRAUFAA.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Grau Policial
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZGRAUPOL'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZGRAUPOL.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de promoção
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZDTPROMO'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZDTPROMO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Número da ordem de promoção
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZNORDPROMO'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZNORDPROMO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Número do BI do MinInt
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZBIMI'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZBIMI.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Função que exerce
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZFUNCAO'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZFUNCAO.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de nomeação
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZDTNOM'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZDTNOM.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Colocação actual / Órgão
+    ls_proposed_values-infty = '9010'.
+    ls_proposed_values-fname = 'P9010-ZDEPCOL'.
+    ls_proposed_values-fval  = ZZIT9010_wa-ZDEPCOL.
+    append ls_proposed_values to lt_proposed_values.
+
+  ENDIF.
+* IT9010 - End
+
+* IT0041 - Datas (Begin)
+
+  DATA: ZZIT0041_wa TYPE ZIT0041.
+
+  READ TABLE ZZIT0041 INTO ZZIT0041_wa INDEX 1.
+
+  IF NOT ZZIT0041_wa IS INITIAL.
+
+**  Tipo Data de admissão
+    ls_proposed_values-infty = '0041'.
+    ls_proposed_values-fname = 'P0041-DAR01'.
+    ls_proposed_values-fval  = 'Z1'.
+    append ls_proposed_values to lt_proposed_values.
+
+**  Data de admissão
+    ls_proposed_values-infty = '0041'.
+    ls_proposed_values-fname = 'P0041-DAT01'.
+    ls_proposed_values-fval  = ZZIT0041_wa-DTADMISSAO.
+    append ls_proposed_values to lt_proposed_values.
+
+    IF NOT ZZIT0041-DTDEMISSAO IS INITIAL.
+**  Tipo Data de demissão
+      ls_proposed_values-infty = '0041'.
+      ls_proposed_values-fname = 'P0041-DAR02'.
+      ls_proposed_values-fval  = 'Z2'.
+      append ls_proposed_values to lt_proposed_values.
+
+**  Data de demissão
+      ls_proposed_values-infty = '0041'.
+      ls_proposed_values-fname = 'P0041-DAT02'.
+      ls_proposed_values-fval  = ZZIT0041_wa-DTDEMISSAO.
+      append ls_proposed_values to lt_proposed_values.
+    ENDIF.
+
+  ENDIF.
+* IT0041 - End
+
+  clear ls_return_0.
+  clear ls_hr_return.
+
+* Cria registos conforme os dados passados no lt_proposed_values
+  call function 'HR_MAINTAIN_MASTERDATA'
+    EXPORTING
+*      pernr           = nf_pernr
+      massn           = ls_p0000-massn
+      actio           = 'INS'
+      tclas           = 'A'
+*      subty          = ls_p0000-massn
+      begda           = '20100101'
+      endda           = '99991231'
+      werks           = ls_p0001-werks
+      persg           = ls_p0001-persg
+      persk           = ls_p0001-persk
+      plans           = ls_p0001-plans
+      dialog_mode     = '0'
+      luw_mode        = '1'
+      NO_EXISTENCE_CHECK = 'X'
+    IMPORTING
+      return          = ls_return_0
+      hr_return       = ls_hr_return
+    TABLES
+      proposed_values = lt_proposed_values
+      MODIFIED_KEYS   = modif_keys
+    EXCEPTIONS
+      others          = 1.
+
+* Código de retorno na criação do funcionário
+* E - Erro
+* S - Sucesso
+  if ls_return_0-type = 'E'
+  or ls_return_0-type = 'A'
+  or ls_return_0-type = 'X'.
+    return_code = 'E'.
+  ELSE.
+    return_code = 'S'.
+  ENDIF.
+
+  IF return_code = 'S'.
+
+    DATA: modif_keys_wa type PSKEY.
+
+    loop at modif_keys into modif_keys_wa.
+      L_PERNR = modif_keys_wa-pernr.
+      exit.
+    ENDLOOP.
+
+    perform block_employee
+              using L_PERNR.
+
+* IT0021 - Dados familiares (Begin)
+    DATA: ZZIT0021_wa TYPE ZIT0021,
+          ls_p0021 type p0021.
+
+    LOOP AT ZZIT0021 into ZZIT0021_wa.
+
+**          Subtipo
+      ls_p0021-SUBTY  = ZZIT0021_wa-FAMSA.
+
+**          Membro (parentesco)
+      ls_p0021-FAMSA  = ZZIT0021_wa-FAMSA.
+
+**          Nome completo
+      ls_p0021-FCNAM  = ZZIT0021_wa-FCNAM.
+
+**          Sexo
+      ls_p0021-FASEX  = ZZIT0021_wa-FASEX.
+
+**          Data de nascimento
+      ls_p0021-FGBDT  = ZZIT0021_wa-FGBDT.
+
+**          Local de nascimento
+      ls_p0021-FGBOT  = ZZIT0021_wa-FGBOT.
+
+**          Província
+      ls_p0021-ZPROVINCIA  = ZZIT0021_wa-ZPROVINCIA.
+
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '0021'
+          number        = L_PERNR
+          record        = ls_p0021
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = 'INS'
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT0021 - End
+
+* IT0185 - Documentos (Begin)
+    DATA: ZZIT0185_wa TYPE ZIT0185,
+          ls_p0185    type p0185.
+
+    LOOP AT ZZIT0185 into ZZIT0185_wa.
+
+      clear ls_p0185.
+**          Subtipo
+      ls_p0185-SUBTY = ZZIT0185_wa-ICTYP.
+**          Tipo de documento
+      ls_p0185-ICTYP = ZZIT0185_wa-ICTYP.
+**          Número do documento
+      ls_p0185-ICNUM  = ZZIT0185_wa-ICNUM.
+**          Data de emissão do documento
+      ls_p0185-FPDAT  = ZZIT0185_wa-FPDAT.
+**          Local de emissão do documento
+      ls_p0185-ISSPL  = ZZIT0185_wa-ISSPL.
+
+      call function 'HR_INFOTYPE_OPERATION'
+    exporting
+      infty         = '0185'
+      subtype       = ls_p0185-subty
+      number        = L_PERNR
+      record        = ls_p0185
+*        objectid      = ls_p0002-objps
+      validityend   = '99991231'
+      validitybegin = sy-datum
+      operation     = lv_operation
+    importing
+      return        = ls_return
+    exceptions
+      others        = 0.
+
+    ENDLOOP.
+* IT0185 - End
+
+* IT0006 - Endereços (Begin)
+    DATA: ZZIT0006_wa type ZIT0006,
+          ls_p0006    type p0006.
+
+    LOOP AT ZZIT0006 INTO ZZIT0006_wa.
+
+      clear ls_p0006.
+
+**          Subtipo
+      ls_p0006-SUBTY  = ZZIT0006_wa-ANSSA.
+
+**          Tipo de endereço
+      ls_p0006-ANSSA  = ZZIT0006_wa-ANSSA.
+
+**          Rua
+      ls_p0006-STRAS  = ZZIT0006_wa-STRAS.
+
+**          Local de residência
+      ls_p0006-LOCAT  = ZZIT0006_wa-LOCAT.
+
+**          Bairro
+      ls_p0006-ORT02  = ZZIT0006_wa-ORT02.
+
+**          Munícípio
+      ls_p0006-ORT01  = ZZIT0006_wa-ORT01.
+
+**          Província
+      ls_p0006-STATE  = ZZIT0006_wa-STATE.
+
+**          Tipo de habitação
+      ls_p0006-ZTIPOHABIT  = ZZIT0006_wa-ZTIPOHABIT.
+
+**          Código Postal - é obrigatório no programa
+      ls_p0006-PSTLZ  = '9999-999'.
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '0006'
+          subtype       = ls_p0006-subty
+          number        = L_PERNR
+          record        = ls_p0006
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT0006 (End)
+
+* IT9003 - Viaturas (Begin)
+    DATA: ZZIT9003_wa TYPE PS9003,
+          ls_p9003    TYPE p9003.
+
+    LOOP AT ZZIT9003 into ZZIT9003_wa.
+
+      clear ls_p9003.
+**          Marca
+      ls_p9003-ZMARCA  = ZZIT9003_wa-ZMARCA.
+
+**          Modelo
+      ls_p9003-ZMODELO  = ZZIT9003_wa-ZMODELO.
+
+**          Matrícula
+      ls_p9003-ZMATRICULA  = ZZIT9003_wa-ZMATRICULA.
+
+**          Cor
+      ls_p9003-ZCOR  = ZZIT9003_wa-ZCOR.
+
+**          Propriedade
+      ls_p9003-ZPROPRIEDADE  = ZZIT9003_wa-ZPROPRIEDADE.
+
+**          Departamento de colocação / Órgão
+      ls_p9003-ZORGAO  = ZZIT9003_wa-ZORGAO.
+
+**          Observações
+      ls_p9003-ZOBS  = ZZIT9003_wa-ZOBS.
+
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '9003'
+          number        = L_PERNR
+          record        = ls_p9003
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT9003 (End)
+
+* IT9006 - Medidas Disciplinares (Begin)
+    DATA: ZZIT9006_wa TYPE PS9006,
+          ls_p9006    TYPE p9006.
+
+    LOOP AT ZZIT9006 into ZZIT9006_wa.
+
+      clear ls_p0006.
+
+**          Infracção cometida
+      ls_p9006-ZINFRACCAO  = ZZIT9006_wa-ZINFRACCAO.
+
+**          Pena aplicada
+      ls_p9006-ZPENA  = ZZIT9006_wa-ZPENA.
+
+**          Data
+      ls_p9006-ZDATA  = ZZIT9006_wa-ZDATA.
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '9006'
+          number        = L_PERNR
+          record        = ls_p9006
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT9006 (End)
+
+* IT9007 - Línguas (Begin)
+    DATA: ZZIT9007_wa TYPE PS9007,
+          ls_p9007    TYPE p9007.
+
+    LOOP AT ZZIT9007 into ZZIT9007_wa.
+
+      clear ls_p9007.
+**          Língua
+      ls_p9007-ZLINGUA  = ZZIT9007_wa-ZLINGUA.
+
+**          Fala
+      ls_p9007-ZFALA  = ZZIT9007_wa-ZFALA.
+
+**          Escreve
+      ls_p9007-ZESCREVE  = ZZIT9007_wa-ZESCREVE.
+
+**          Observações
+      ls_p9007-ZOBS  = ZZIT9007_wa-ZOBS.
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '9007'
+          number        = L_PERNR
+          record        = ls_p9007
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT9007 (End)
+
+* IT9008 - Cursos e Especializações Frequentadas (Begin)
+
+    DATA: ZZIT9008_wa TYPE PS9008,
+          ls_p9008    TYPE p9008.
+
+
+    LOOP AT ZZIT9008 into ZZIT9008_wa.
+
+      clear ls_p9008.
+
+**          Curso
+      ls_p9008-ZTCURSO  = ZZIT9008_wa-ZTCURSO.
+
+**          Data início
+      ls_p9008-ZDTINI  = ZZIT9008_wa-ZDTINI.
+
+**          Data término
+      ls_p9008-ZDTFIM  = ZZIT9008_wa-ZDTFIM.
+
+**          País
+      ls_p9008-ZPAIS  = ZZIT9008_wa-ZPAIS.
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '9008'
+          number        = L_PERNR
+          record        = ls_p9008
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT9008 (End)
+
+* IT9012 - Faltas (Begin)
+    DATA: ZZIT9012_wa TYPE P9012,
+          ls_p9012    TYPE p9012.
+
+    LOOP AT ZZIT9012 into ZZIT9012_wa.
+
+      clear ls_p9012.
+
+**          Falta
+      ls_p9012-ZTIPOFALTA  = ZZIT9012_wa-ZTIPOFALTA.
+
+**          Dias de ausência
+      ls_p9012-ZNUMDIAS  = ZZIT9012_wa-ZNUMDIAS.
+
+**          Data início
+      ls_p9012-BEGDA  = ZZIT9012_wa-BEGDA.
+
+**          Data fim
+      ls_p9012-ENDDA  = ZZIT9012_wa-BEGDA.
+
+      call function 'HR_INFOTYPE_OPERATION'
+        EXPORTING
+          infty         = '9012'
+          number        = L_PERNR
+          record        = ls_p9012
+          validityend   = '99991231'
+          validitybegin = sy-datum
+          operation     = lv_operation
+        IMPORTING
+          return        = ls_return
+        EXCEPTIONS
+          others        = 0.
+
+    ENDLOOP.
+* IT9012 (End)
+
+* IT2010 - Horas Extra (Begin)
+    DATA: ZZIT2010_wa TYPE P2010,
+          ls_p2010    TYPE p2010.
+
+    LOOP AT ZZIT2010 into ZZIT2010_wa.
+
+      clear ls_p2010.
+
+**          Data
+      ls_p2010-BEGDA  = ZZIT2010_wa-BEGDA.
+
+**          Rubrica salarial
+      ls_p2010-LGART  = ZZIT2010_wa-LGART.
+
+**          Número de horas
+      ls_p2010-ANZHL  = ZZIT2010_wa-ANZHL.
+
+    ENDLOOP.
+* IT2010 (End)
+  ENDIF.
+
+ENDFUNCTION.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  BLOCK_EMPLOYEE
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+form block_employee USING l_pernr.
+
+  data: ls_return type bapireturn1.
+
+  call function 'BAPI_EMPLOYEE_ENQUEUE'
+    EXPORTING
+      number = l_pernr
+    IMPORTING
+      return = ls_return.
+
+endform.                    "block_employee
